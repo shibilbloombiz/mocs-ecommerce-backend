@@ -50,6 +50,7 @@ const productSchema = new mongoose.Schema(
         {
           label: { type: String, required: true },
           url: { type: String, required: true },
+          publicId: String,
         },
       ],
       default: [],

@@ -2,10 +2,30 @@ const asyncHandler = require("express-async-handler");
 const Product = require("../models/Product");
 const ProductImage = require("../models/ProductImage");
 const path = require("path");
+const { cloudinary } = require("../config/cloudinary");
 
-const deleteMongoImage = async (imageUrl) => {
-  if (!imageUrl || typeof imageUrl !== "string") return;
-  const match = imageUrl.match(/\/api\/products\/image\/([a-fA-F0-9]{24})/);
+const getPublicIdFromUrl = (url) => {
+  if (typeof url !== "string" || !url.includes("cloudinary.com") || !url.includes("/upload/")) return null;
+  try {
+    const parts = url.split("/upload/");
+    if (parts.length < 2) return null;
+    let pathPart = parts[1];
+    // Remove version segment (e.g. v12345678/)
+    pathPart = pathPart.replace(/^v\d+\//, "");
+    // Remove file extension
+    pathPart = pathPart.replace(/\.[^/.]+$/, "");
+    return pathPart;
+  } catch (err) {
+    console.error("Error extracting public ID:", err);
+    return null;
+  }
+};
+
+const deleteProductImage = async (url, publicId) => {
+  if (!url || typeof url !== "string") return;
+
+  // 1. Clean up from MongoDB if binary
+  const match = url.match(/\/api\/products\/image\/([a-fA-F0-9]{24})/);
   if (match) {
     const imageId = match[1];
     try {
@@ -13,6 +33,23 @@ const deleteMongoImage = async (imageUrl) => {
       console.log(`Successfully cleaned up image ${imageId} from MongoDB`);
     } catch (err) {
       console.error(`Failed to clean up image ${imageId} from MongoDB:`, err);
+    }
+    return;
+  }
+
+  // 2. Clean up from Cloudinary
+  let actualPublicId = publicId;
+  if (!actualPublicId && url.includes("cloudinary.com")) {
+    actualPublicId = getPublicIdFromUrl(url);
+  }
+
+  if (actualPublicId && url.includes("cloudinary.com")) {
+    try {
+      console.log(`Deleting Cloudinary asset: ${actualPublicId}`);
+      await cloudinary.uploader.destroy(actualPublicId);
+      console.log(`Successfully deleted Cloudinary asset: ${actualPublicId}`);
+    } catch (err) {
+      console.error(`Failed to delete Cloudinary asset ${actualPublicId}:`, err);
     }
   }
 };
@@ -124,7 +161,7 @@ exports.update = asyncHandler(async (req, res) => {
 
   // If coverImage is changed, clean up the old one
   if (req.body.coverImage && req.body.coverImage !== existingProduct.coverImage) {
-    await deleteMongoImage(existingProduct.coverImage);
+    await deleteProductImage(existingProduct.coverImage);
   }
 
   // If additionalImages are updated, clean up any old images that were removed
@@ -135,7 +172,7 @@ exports.update = asyncHandler(async (req, res) => {
     for (const oldImg of oldImgs) {
       const isStillPresent = newImgs.some(newImg => newImg.url === oldImg.url);
       if (!isStillPresent) {
-        await deleteMongoImage(oldImg.url);
+        await deleteProductImage(oldImg.url, oldImg.publicId);
       }
     }
   }
@@ -160,7 +197,7 @@ exports.update = asyncHandler(async (req, res) => {
       if (oldV.images) {
         for (const img of oldV.images) {
           if (img.url && !newUrls.has(img.url)) {
-            await deleteMongoImage(img.url);
+            await deleteProductImage(img.url, img.publicId);
           }
         }
       }
@@ -264,6 +301,7 @@ exports.uploadSingleImage = asyncHandler(async (req, res) => {
 
   res.status(201).json({
     url,
+    public_id: req.file.filename || req.file.public_id || "",
     filename: req.file.originalname,
   });
 });
