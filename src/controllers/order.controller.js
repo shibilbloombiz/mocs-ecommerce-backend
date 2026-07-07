@@ -11,7 +11,7 @@ exports.listMine = asyncHandler(async (req, res) => {
 
 // GET /api/orders/all (Admin only)
 exports.listAll = asyncHandler(async (req, res) => {
-  const { showDeleted = "false" } = req.query;
+  const { showDeleted = "false", orderStatus, paymentStatus, paymentMethod } = req.query;
   const q = {};
   if (showDeleted === "true") {
     q.isDeleted = true;
@@ -19,8 +19,31 @@ exports.listAll = asyncHandler(async (req, res) => {
     q.isDeleted = { $ne: true };
   }
 
+  if (orderStatus) q.orderStatus = orderStatus;
+  if (paymentStatus) q.paymentStatus = paymentStatus;
+  if (paymentMethod) q.paymentMethod = paymentMethod;
+
   const orders = await Order.find(q).sort("-createdAt").populate("user", "name email");
   res.json(orders);
+});
+
+// GET /api/orders/:id
+exports.getById = asyncHandler(async (req, res) => {
+  const order = await Order.findById(req.params.id).populate("user", "name email");
+  if (!order) {
+    res.status(404);
+    throw new Error("Order not found");
+  }
+
+  const isOwner = order.user._id.toString() === req.user._id.toString();
+  const isAdmin = req.user.role === "admin" || req.user.role === "superadmin";
+
+  if (!isOwner && !isAdmin) {
+    res.status(403);
+    throw new Error("Not authorized to view this order");
+  }
+
+  res.json(order);
 });
 
 // POST /api/orders
@@ -30,6 +53,33 @@ exports.create = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error("Shipping address is required");
   }
+
+  const name = shippingAddress.name || shippingAddress.fullName;
+  const phone = shippingAddress.phone;
+  const email = shippingAddress.email || req.user.email;
+  const address = shippingAddress.address || shippingAddress.line1;
+  const city = shippingAddress.city;
+  const state = shippingAddress.state;
+  const pincode = shippingAddress.pincode || shippingAddress.postalCode;
+
+  if (!name || !phone || !address || !city || !state || !pincode) {
+    res.status(400);
+    throw new Error("Complete shipping details (name, phone, address, city, state, pincode) are required");
+  }
+
+  const cleanShippingAddress = {
+    name,
+    fullName: name,
+    phone,
+    email,
+    address,
+    line1: address,
+    city,
+    state,
+    pincode,
+    postalCode: pincode,
+    country: shippingAddress.country || "India"
+  };
 
   const bodyItems =
     req.body.items ||
@@ -57,7 +107,6 @@ exports.create = asyncHandler(async (req, res) => {
 
       if (item.color) {
         const variant = product.colors.find((c) => c.name === item.color);
-
         if (variant && variant.stock < qty) {
           res.status(400);
           throw new Error(`Insufficient stock for ${product.name} (Color: ${item.color})`);
@@ -93,11 +142,9 @@ exports.create = asyncHandler(async (req, res) => {
 
       if (i.color) {
         const variant = product.colors.find((c) => c.name === i.color);
-        if (variant) {
-          if (variant.stock < i.qty) {
-            res.status(400);
-            throw new Error(`Insufficient stock for ${product.name} (Color: ${i.color})`);
-          }
+        if (variant && variant.stock < i.qty) {
+          res.status(400);
+          throw new Error(`Insufficient stock for ${product.name} (Color: ${i.color})`);
         }
       } else if (product.stock < i.qty) {
         res.status(400);
@@ -131,20 +178,32 @@ exports.create = asyncHandler(async (req, res) => {
 
   const total = subtotal + shipping;
 
+  const normalizedMethod = paymentMethod && paymentMethod.toLowerCase() === "cod" ? "COD" : "Online";
+
   const order = await Order.create({
     user: req.user._id,
     items,
-    shippingAddress,
-    paymentMethod: paymentMethod || "cod",
-    paymentStatus: paymentMethod === "cod" ? "pending" : "pending",
+    shippingAddress: cleanShippingAddress,
+    paymentMethod: normalizedMethod,
+    paymentStatus: "Pending",
+    orderStatus: "Placed",
     subtotal,
     shipping,
+    shippingCharge: shipping,
     total,
+    totalAmount: total,
     status: "pending",
+    statusHistory: [
+      {
+        status: "Placed",
+        note: normalizedMethod === "COD" ? "Order placed via Cash on Delivery" : "Order payment initialized",
+        updatedBy: req.user._id.toString(),
+      }
+    ],
   });
 
   // If Cash on Delivery, deduct stock immediately
-  if (order.paymentMethod === "cod") {
+  if (order.paymentMethod === "COD") {
     for (const item of order.items) {
       const product = await Product.findById(item.product);
       if (product) {
@@ -163,17 +222,95 @@ exports.create = asyncHandler(async (req, res) => {
   res.status(201).json(order);
 });
 
-// PUT /api/orders/:id
+// PATCH /api/orders/:id/status
 exports.updateStatus = asyncHandler(async (req, res) => {
-  const order = await Order.findByIdAndUpdate(
-    req.params.id,
-    {
-      status: req.body.status,
-      ...(req.body.status === "delivered" && { deliveredAt: new Date(), paymentStatus: "paid" }), // COD orders get paid on delivery
-    },
-    { new: true },
-  );
-  if (!order) { res.status(404); throw new Error("Order not found"); }
+  const { status, note } = req.body;
+  if (!status) {
+    res.status(400);
+    throw new Error("Status is required");
+  }
+
+  const order = await Order.findById(req.params.id);
+  if (!order) {
+    res.status(404);
+    throw new Error("Order not found");
+  }
+
+  // Do not allow Delivered order to go back to Processing/Shipped
+  const isDelivered = order.orderStatus === "Delivered" || order.status === "delivered";
+  const targetUpper = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+  let formattedTarget = targetUpper;
+  if (formattedTarget === "Out for delivery" || formattedTarget === "Out_for_delivery") {
+    formattedTarget = "Out for Delivery";
+  }
+
+  if (isDelivered && formattedTarget !== "Returned" && formattedTarget !== "Cancelled") {
+    res.status(400);
+    throw new Error("Delivered order cannot go back to processing/shipped status");
+  }
+
+  order.orderStatus = formattedTarget;
+  order.status = status.toLowerCase();
+
+  if (formattedTarget === "Delivered") {
+    order.deliveredAt = new Date();
+    if (order.paymentMethod === "COD") {
+      order.paymentStatus = "Paid";
+      order.paidAt = new Date();
+    }
+  } else if (formattedTarget === "Cancelled") {
+    order.cancelledAt = new Date();
+    // Revert inventory if not already cancelled
+    if (order.status !== "cancelled") {
+      for (const item of order.items) {
+        const product = await Product.findById(item.product);
+        if (product) {
+          if (item.color) {
+            const variant = product.colors.find((c) => c.name === item.color);
+            if (variant) {
+              variant.stock += item.qty;
+            }
+          }
+          product.stock += item.qty;
+          await product.save();
+        }
+      }
+    }
+  }
+
+  order.statusHistory.push({
+    status: formattedTarget,
+    note: note || `Order status updated to ${formattedTarget} by admin`,
+    updatedBy: req.user._id.toString(),
+  });
+
+  await order.save();
+  res.json(order);
+});
+
+// PATCH /api/orders/:id/payment-status
+exports.updatePaymentStatus = asyncHandler(async (req, res) => {
+  const { paymentStatus } = req.body;
+  if (!paymentStatus) {
+    res.status(400);
+    throw new Error("Payment status is required");
+  }
+
+  const order = await Order.findById(req.params.id);
+  if (!order) {
+    res.status(404);
+    throw new Error("Order not found");
+  }
+
+  // Capitalize
+  const formattedPay = paymentStatus.charAt(0).toUpperCase() + paymentStatus.slice(1).toLowerCase();
+
+  order.paymentStatus = formattedPay;
+  if (formattedPay === "Paid") {
+    order.paidAt = new Date();
+  }
+
+  await order.save();
   res.json(order);
 });
 
@@ -207,7 +344,7 @@ exports.restore = asyncHandler(async (req, res) => {
   res.json({ success: true, message: "Order restored successfully", order });
 });
 
-// PUT /api/orders/:id/cancel
+// PATCH /api/orders/:id/cancel
 exports.cancelOrder = asyncHandler(async (req, res) => {
   const order = await Order.findById(req.params.id);
   if (!order) {
@@ -220,13 +357,23 @@ exports.cancelOrder = asyncHandler(async (req, res) => {
     throw new Error("Not authorized to cancel this order");
   }
 
-  if (order.status === "shipped" || order.status === "delivered" || order.status === "cancelled") {
+  const currentStat = order.orderStatus || "Placed";
+  const disallowed = ["Shipped", "Out for Delivery", "Delivered", "Cancelled", "Returned"];
+  if (disallowed.includes(currentStat)) {
     res.status(400);
-    throw new Error("Cannot cancel this order (status: " + order.status + ")");
+    throw new Error("Cannot cancel order when status is: " + currentStat);
   }
 
+  order.orderStatus = "Cancelled";
   order.status = "cancelled";
-  order.cancelReason = req.body.reason || "Cancelled";
+  order.cancelledAt = new Date();
+  order.cancelReason = req.body.reason || "Cancelled by user";
+
+  order.statusHistory.push({
+    status: "Cancelled",
+    note: req.body.reason || "Order cancelled by user",
+    updatedBy: req.user._id.toString(),
+  });
 
   // Revert inventory
   for (const item of order.items) {
@@ -260,14 +407,22 @@ exports.returnOrder = asyncHandler(async (req, res) => {
     throw new Error("Not authorized to request return for this order");
   }
 
-  if (order.status !== "delivered") {
+  const currentStat = order.orderStatus || "";
+  if (currentStat !== "Delivered") {
     res.status(400);
     throw new Error("Can only request return for delivered orders");
   }
 
-  order.status = "return_requested";
+  order.orderStatus = "Returned";
+  order.status = "returned";
   order.returnReason = req.body.reason || "No reason provided";
-  await order.save();
 
+  order.statusHistory.push({
+    status: "Returned",
+    note: req.body.reason || "Return request submitted",
+    updatedBy: req.user._id.toString(),
+  });
+
+  await order.save();
   res.json(order);
 });

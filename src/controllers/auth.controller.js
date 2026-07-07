@@ -9,6 +9,8 @@ const sanitize = (u) => ({
   email: u.email,
   role: u.role,
   avatar: u.avatar,
+  phone: u.phone,
+  address: u.address,
 });
 
 exports.register = asyncHandler(async (req, res) => {

@@ -14,6 +14,33 @@ exports.createOrder = asyncHandler(async (req, res) => {
     throw new Error("Shipping address is required");
   }
 
+  const name = shippingAddress.name || shippingAddress.fullName;
+  const phone = shippingAddress.phone;
+  const email = shippingAddress.email || req.user.email;
+  const address = shippingAddress.address || shippingAddress.line1;
+  const city = shippingAddress.city;
+  const state = shippingAddress.state;
+  const pincode = shippingAddress.pincode || shippingAddress.postalCode;
+
+  if (!name || !phone || !address || !city || !state || !pincode) {
+    res.status(400);
+    throw new Error("Complete shipping details (name, phone, address, city, state, pincode) are required");
+  }
+
+  const cleanShippingAddress = {
+    name,
+    fullName: name,
+    phone,
+    email,
+    address,
+    line1: address,
+    city,
+    state,
+    pincode,
+    postalCode: pincode,
+    country: shippingAddress.country || "India"
+  };
+
   const bodyItems =
     req.body.items ||
     req.body.cartItems ||
@@ -112,13 +139,23 @@ exports.createOrder = asyncHandler(async (req, res) => {
   const order = await Order.create({
     user: req.user._id,
     items,
-    shippingAddress,
-    paymentMethod: req.body.paymentMethod || "card",
-    paymentStatus: "pending",
+    shippingAddress: cleanShippingAddress,
+    paymentMethod: "Online",
+    paymentStatus: "Pending",
+    orderStatus: "Placed",
     subtotal,
     shipping,
+    shippingCharge: shipping,
     total: totalAmount,
+    totalAmount,
     status: "pending",
+    statusHistory: [
+      {
+        status: "Placed",
+        note: "Order payment initialized",
+        updatedBy: req.user._id.toString(),
+      }
+    ]
   });
 
   const options = {
@@ -145,7 +182,7 @@ exports.createOrder = asyncHandler(async (req, res) => {
     });
   } catch (error) {
     console.error("Razorpay order creation failed:", error);
-    order.paymentStatus = "failed";
+    order.paymentStatus = "Failed";
     order.paymentFailureReason = error.message || "Razorpay order creation failure";
     await order.save();
 
@@ -175,7 +212,7 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
     throw new Error("Unauthorized to access this order");
   }
 
-  if (order.paymentStatus === "paid") {
+  if (order.paymentStatus === "Paid" || order.paymentStatus === "paid") {
     return res.json({ success: true, message: "Payment already verified", order });
   }
 
@@ -191,7 +228,7 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
     .digest("hex");
 
   if (generatedSignature !== razorpay_signature) {
-    order.paymentStatus = "failed";
+    order.paymentStatus = "Failed";
     order.paymentFailureReason = "Signature mismatch verification failed";
     await order.save();
 
@@ -199,11 +236,20 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
     throw new Error("Invalid payment signature. Verification failed.");
   }
 
-  order.paymentStatus = "paid";
+  order.paymentStatus = "Paid";
+  order.orderStatus = "Placed";
   order.status = "paid";
   order.razorpayPaymentId = razorpay_payment_id;
   order.razorpaySignature = razorpay_signature;
+  order.transactionId = razorpay_payment_id;
   order.paidAt = new Date();
+
+  order.statusHistory.push({
+    status: "Placed",
+    note: `Online payment verified. Transaction: ${razorpay_payment_id}`,
+    updatedBy: req.user._id.toString(),
+  });
+
   await order.save();
 
   await processPaymentCompletion(order, req.user._id);
@@ -264,11 +310,20 @@ exports.webhook = asyncHandler(async (req, res) => {
     const razorpayPaymentId = paymentEntity.id;
 
     const order = await Order.findOne({ razorpayOrderId });
-    if (order && order.paymentStatus !== "paid") {
-      order.paymentStatus = "paid";
+    if (order && order.paymentStatus !== "Paid" && order.paymentStatus !== "paid") {
+      order.paymentStatus = "Paid";
+      order.orderStatus = "Placed";
       order.status = "paid";
       order.razorpayPaymentId = razorpayPaymentId;
+      order.transactionId = razorpayPaymentId;
       order.paidAt = new Date();
+
+      order.statusHistory.push({
+        status: "Placed",
+        note: `Online payment captured via Webhook. Transaction: ${razorpayPaymentId}`,
+        updatedBy: "system",
+      });
+
       await order.save();
 
       await processPaymentCompletion(order, order.user);
@@ -279,8 +334,8 @@ exports.webhook = asyncHandler(async (req, res) => {
     const errorDescription = paymentEntity.error_description || "Payment failed via Razorpay";
 
     const order = await Order.findOne({ razorpayOrderId });
-    if (order && order.paymentStatus === "pending") {
-      order.paymentStatus = "failed";
+    if (order && (order.paymentStatus === "Pending" || order.paymentStatus === "pending")) {
+      order.paymentStatus = "Failed";
       order.paymentFailureReason = errorDescription;
       await order.save();
     }
