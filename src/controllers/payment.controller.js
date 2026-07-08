@@ -365,3 +365,27 @@ exports.getPaymentStatus = asyncHandler(async (req, res) => {
     razorpayPaymentId: order.razorpayPaymentId,
   });
 });
+
+// POST /api/payments/:orderId/cancel
+exports.cancelPayment = asyncHandler(async (req, res) => {
+  const order = await Order.findById(req.params.orderId);
+  if (!order) {
+    res.status(404);
+    throw new Error("Order not found");
+  }
+  if (order.user.toString() !== req.user._id.toString()) {
+    res.status(403);
+    throw new Error("Unauthorized to access this order");
+  }
+  if (order.paymentStatus === "Pending" || order.paymentStatus === "pending") {
+    order.paymentStatus = "Failed";
+    order.paymentFailureReason = "Payment cancelled by user";
+    order.statusHistory.push({
+      status: "Placed",
+      note: "Payment cancelled by customer during checkout",
+      updatedBy: req.user._id.toString(),
+    });
+    await order.save();
+  }
+  res.json({ success: true, order });
+});

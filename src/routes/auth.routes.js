@@ -8,6 +8,7 @@ const {
 
 router.post("/register", validate(registerSchema), ctrl.register);
 router.post("/login", validate(loginSchema), ctrl.login);
+router.post("/clerk-sync", ctrl.clerkSync);
 router.get("/me", protect, ctrl.me);
 router.post("/forgot", validate(forgotSchema), ctrl.forgotPassword);
 router.post("/reset", validate(resetSchema), ctrl.resetPassword);

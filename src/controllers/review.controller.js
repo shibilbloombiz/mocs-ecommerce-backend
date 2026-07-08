@@ -20,9 +20,9 @@ exports.list = asyncHandler(async (req, res) => {
 });
 
 exports.create = asyncHandler(async (req, res) => {
-  const { product, rating, text, color, images } = req.body;
+  const { product, rating, text, color, size, images } = req.body;
   const review = await Review.create({
-    product, rating, text, color, images,
+    product, rating, text, color, size, images,
     user: req.user._id,
     verifiedPurchase: true, // TODO: check order history
   });

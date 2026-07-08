@@ -11,6 +11,7 @@ router.use(protect);
 router.post("/create-order", ctrl.createOrder);
 router.post("/verify", ctrl.verifyPayment);
 router.get("/:orderId/status", ctrl.getPaymentStatus);
+router.post("/:orderId/cancel", ctrl.cancelPayment);
 
 // Admin-only routes
 router.get("/", requireAdmin, adminCtrl.listPayments);

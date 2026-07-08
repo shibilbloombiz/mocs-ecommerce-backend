@@ -15,6 +15,7 @@ const userSchema = new mongoose.Schema(
     resetTokenExpiry: Date,
     isDeleted: { type: Boolean, default: false },
     deletedAt: Date,
+    clerkId: { type: String, index: true },
   },
   { timestamps: true },
 );

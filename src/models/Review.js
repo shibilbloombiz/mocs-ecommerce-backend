@@ -7,6 +7,7 @@ const reviewSchema = new mongoose.Schema(
     rating: { type: Number, required: true, min: 1, max: 5 },
     text: { type: String, required: true, maxlength: 2000 },
     color: String, // color variant — enables color-specific review filtering
+    size: Number, // size variant
     images: [String],
     verifiedPurchase: { type: Boolean, default: false },
     helpfulCount: { type: Number, default: 0 },

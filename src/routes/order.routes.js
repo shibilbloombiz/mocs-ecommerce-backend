@@ -7,13 +7,14 @@ router.use(protect);
 // User endpoints
 router.get("/", ctrl.listMine);
 router.post("/", ctrl.create);
+
+// Admin endpoints (MUST be before parameter :id routes to prevent matching "all")
+router.get("/all", requireAdmin, ctrl.listAll);
+
 router.get("/:id", ctrl.getById);
 router.put("/:id/cancel", ctrl.cancelOrder);
 router.patch("/:id/cancel", ctrl.cancelOrder);
 router.put("/:id/return", ctrl.returnOrder);
-
-// Admin endpoints
-router.get("/all", requireAdmin, ctrl.listAll);
 router.put("/:id", requireAdmin, ctrl.updateStatus);
 router.patch("/:id/status", requireAdmin, ctrl.updateStatus);
 router.patch("/:id/payment-status", requireAdmin, ctrl.updatePaymentStatus);

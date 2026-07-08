@@ -1,5 +1,6 @@
 const asyncHandler = require("express-async-handler");
 const Wishlist = require("../models/Wishlist");
+const Product = require("../models/Product");
 
 exports.get = asyncHandler(async (req, res) => {
   const wl = await Wishlist.findOne({ user: req.user._id }).populate("products");

@@ -45,6 +45,51 @@ exports.login = asyncHandler(async (req, res) => {
   });
 });
 
+exports.clerkSync = asyncHandler(async (req, res) => {
+  const { email, name, clerkId, avatar } = req.body;
+  if (!email) {
+    res.status(400);
+    throw new Error("Email is required for Clerk sync");
+  }
+
+  let user = await User.findOne({ email });
+
+  if (!user) {
+    // Generate a secure random password since authentications are managed by Clerk
+    const randomPassword = crypto.randomBytes(16).toString("hex");
+    user = await User.create({
+      name: name || "Clerk User",
+      email: email.toLowerCase().trim(),
+      password: randomPassword,
+      clerkId: clerkId,
+      avatar: avatar || "",
+      role: "user"
+    });
+  } else {
+    let updated = false;
+    if (!user.clerkId) {
+      user.clerkId = clerkId;
+      updated = true;
+    }
+    if (avatar && user.avatar !== avatar) {
+      user.avatar = avatar;
+      updated = true;
+    }
+    if (name && (!user.name || user.name === "Guest User")) {
+      user.name = name;
+      updated = true;
+    }
+    if (updated) {
+      await user.save();
+    }
+  }
+
+  res.json({
+    user: sanitize(user),
+    token: signToken({ id: user._id, role: user.role }),
+  });
+});
+
 exports.me = asyncHandler(async (req, res) => res.json({ user: sanitize(req.user) }));
 
 exports.forgotPassword = asyncHandler(async (req, res) => {
