@@ -44,6 +44,7 @@ const productSchema = new mongoose.Schema(
     stock: { type: Number, default: 0, min: 0 },
     colors: { type: [colorVariantSchema], default: [] },
     sizes: { type: [Number], default: [] },
+    outOfStockSizes: { type: [Number], default: [] },
     coverImage: { type: String, required: true },
     additionalImages: {
       type: [
