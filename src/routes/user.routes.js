@@ -11,6 +11,7 @@ router.put("/change-password", ctrl.changePassword);
 
 // Admin user management endpoints
 router.get("/", requireAdmin, ctrl.listUsers);
+router.post("/", requireAdmin, ctrl.createUser);
 router.put("/:id", requireAdmin, ctrl.updateUser);
 router.delete("/:id", requireAdmin, ctrl.deleteUser);
 router.post("/:id/restore", requireAdmin, ctrl.restoreUser);

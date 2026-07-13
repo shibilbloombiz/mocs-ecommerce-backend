@@ -223,3 +223,45 @@ exports.restoreUser = asyncHandler(async (req, res) => {
 
   res.json({ success: true, message: "User restored successfully", user });
 });
+
+// POST /api/users (Admin only - Create Staff/User)
+exports.createUser = asyncHandler(async (req, res) => {
+  const { name, email, password, role = "user", phone, address } = req.body;
+
+  if (!name || !email || !password) {
+    res.status(400);
+    throw new Error("Name, email, and password are required");
+  }
+
+  // Only superadmin can create accounts with "admin" or "superadmin" role
+  if ((role === "admin" || role === "superadmin") && req.user.role !== "superadmin") {
+    res.status(403);
+    throw new Error("Only superadmins can create admin accounts");
+  }
+
+  const userExists = await User.findOne({ email });
+  if (userExists) {
+    res.status(400);
+    throw new Error("User already exists with this email");
+  }
+
+  const user = await User.create({
+    name,
+    email,
+    password,
+    role,
+    phone,
+    address
+  });
+
+  res.status(201).json({
+    _id: user._id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    phone: user.phone || "",
+    address: user.address || "",
+    isDeleted: user.isDeleted,
+    createdAt: user.createdAt,
+  });
+});
