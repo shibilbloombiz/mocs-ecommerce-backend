@@ -255,6 +255,14 @@ exports.updateStatus = asyncHandler(async (req, res) => {
     formattedTarget = "Return Accepted";
   }
 
+  const isReturnState = ["Return Requested", "Return Accepted", "Returned"].includes(order.orderStatus);
+  const targetIsReturnState = ["Return Requested", "Return Accepted", "Returned"].includes(formattedTarget);
+
+  if (targetIsReturnState && !isReturnState) {
+    res.status(400);
+    throw new Error("Cannot set return status manually unless the customer has initiated a return request");
+  }
+
   if ((isDelivered || isReturnRequested || isReturnAccepted || isReturned) && 
       formattedTarget !== "Returned" && 
       formattedTarget !== "Cancelled" && 
@@ -346,6 +354,11 @@ exports.updatePaymentStatus = asyncHandler(async (req, res) => {
 
   // Capitalize
   const formattedPay = paymentStatus.charAt(0).toUpperCase() + paymentStatus.slice(1).toLowerCase();
+
+  if (formattedPay === "Refunded" && order.orderStatus !== "Returned") {
+    res.status(400);
+    throw new Error("Can only set payment status to Refunded if the order status is Returned");
+  }
 
   order.paymentStatus = formattedPay;
   if (formattedPay === "Paid") {
