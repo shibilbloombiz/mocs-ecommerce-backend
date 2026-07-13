@@ -6,7 +6,7 @@ const User = require("../models/User");
 
 // GET /api/orders
 exports.listMine = asyncHandler(async (req, res) => {
-  const orders = await Order.find({ user: req.user._id }).sort("-createdAt");
+  const orders = await Order.find({ user: req.user._id }).sort("-createdAt").populate("items.product");
   res.json(orders);
 });
 
@@ -24,13 +24,13 @@ exports.listAll = asyncHandler(async (req, res) => {
   if (paymentStatus) q.paymentStatus = paymentStatus;
   if (paymentMethod) q.paymentMethod = paymentMethod;
 
-  const orders = await Order.find(q).sort("-createdAt").populate("user", "name email");
+  const orders = await Order.find(q).sort("-createdAt").populate("user", "name email").populate("items.product");
   res.json(orders);
 });
 
 // GET /api/orders/:id
 exports.getById = asyncHandler(async (req, res) => {
-  const order = await Order.findById(req.params.id).populate("user", "name email");
+  const order = await Order.findById(req.params.id).populate("user", "name email").populate("items.product");
   if (!order) {
     res.status(404);
     throw new Error("Order not found");
@@ -237,21 +237,45 @@ exports.updateStatus = asyncHandler(async (req, res) => {
     throw new Error("Order not found");
   }
 
-  // Do not allow Delivered order to go back to Processing/Shipped
+  const originalStatus = order.orderStatus;
+
+  // Do not allow Delivered/Return Requested/Return Accepted/Returned order to go back to Processing/Shipped
   const isDelivered = order.orderStatus === "Delivered" || order.status === "delivered";
+  const isReturnRequested = order.orderStatus === "Return Requested" || order.status === "return_requested";
+  const isReturnAccepted = order.orderStatus === "Return Accepted" || order.status === "return_accepted";
+  const isReturned = order.orderStatus === "Returned" || order.status === "returned";
+
   const targetUpper = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
   let formattedTarget = targetUpper;
   if (formattedTarget === "Out for delivery" || formattedTarget === "Out_for_delivery") {
     formattedTarget = "Out for Delivery";
+  } else if (formattedTarget === "Return requested" || formattedTarget === "Return_requested") {
+    formattedTarget = "Return Requested";
+  } else if (formattedTarget === "Return accepted" || formattedTarget === "Return_accepted") {
+    formattedTarget = "Return Accepted";
   }
 
-  if (isDelivered && formattedTarget !== "Returned" && formattedTarget !== "Cancelled") {
+  if ((isDelivered || isReturnRequested || isReturnAccepted || isReturned) && 
+      formattedTarget !== "Returned" && 
+      formattedTarget !== "Cancelled" && 
+      formattedTarget !== "Return Requested" && 
+      formattedTarget !== "Return Accepted" && 
+      formattedTarget !== "Delivered") {
     res.status(400);
-    throw new Error("Delivered order cannot go back to processing/shipped status");
+    throw new Error("Delivered or Returned order cannot go back to processing/shipped status");
   }
 
   order.orderStatus = formattedTarget;
-  order.status = status.toLowerCase();
+  
+  if (formattedTarget === "Return Requested") {
+    order.status = "return_requested";
+  } else if (formattedTarget === "Return Accepted") {
+    order.status = "return_accepted";
+  } else if (formattedTarget === "Out for Delivery") {
+    order.status = "out_for_delivery";
+  } else {
+    order.status = status.toLowerCase();
+  }
 
   if (formattedTarget === "Delivered") {
     order.deliveredAt = new Date();
@@ -262,7 +286,24 @@ exports.updateStatus = asyncHandler(async (req, res) => {
   } else if (formattedTarget === "Cancelled") {
     order.cancelledAt = new Date();
     // Revert inventory if not already cancelled
-    if (order.status !== "cancelled") {
+    if (originalStatus !== "Cancelled") {
+      for (const item of order.items) {
+        const product = await Product.findById(item.product);
+        if (product) {
+          if (item.color) {
+            const variant = product.colors.find((c) => c.name === item.color);
+            if (variant) {
+              variant.stock += item.qty;
+            }
+          }
+          product.stock += item.qty;
+          await product.save();
+        }
+      }
+    }
+  } else if (formattedTarget === "Returned") {
+    // Revert inventory if not already returned (refund is handled manually by admin)
+    if (originalStatus !== "Returned") {
       for (const item of order.items) {
         const product = await Product.findById(item.product);
         if (product) {
@@ -397,7 +438,7 @@ exports.cancelOrder = asyncHandler(async (req, res) => {
 
 // PUT /api/orders/:id/return
 exports.returnOrder = asyncHandler(async (req, res) => {
-  const order = await Order.findById(req.params.id);
+  const order = await Order.findById(req.params.id).populate("items.product");
   if (!order) {
     res.status(404);
     throw new Error("Order not found");
@@ -414,12 +455,39 @@ exports.returnOrder = asyncHandler(async (req, res) => {
     throw new Error("Can only request return for delivered orders");
   }
 
-  order.orderStatus = "Returned";
-  order.status = "returned";
+  // Enforce return window policy
+  const deliveryDate = order.deliveredAt ? new Date(order.deliveredAt) : new Date(order.createdAt);
+  const now = new Date();
+  const diffDays = Math.abs(now.getTime() - deliveryDate.getTime()) / (1000 * 60 * 60 * 24);
+
+  let maxDaysAllowed = 3; // default fallback matching schema default
+  if (order.items && order.items.length > 0) {
+    for (const item of order.items) {
+      const product = item.product;
+      if (product && typeof product === "object") {
+        const promo = product.promo2 || "3-day returns";
+        const match = promo.match(/(\d+)-day/i);
+        if (match) {
+          const days = parseInt(match[1], 10);
+          if (days > maxDaysAllowed) {
+            maxDaysAllowed = days;
+          }
+        }
+      }
+    }
+  }
+
+  if (diffDays > maxDaysAllowed) {
+    res.status(400);
+    throw new Error(`Return window of ${maxDaysAllowed} days has expired`);
+  }
+
+  order.orderStatus = "Return Requested";
+  order.status = "return_requested";
   order.returnReason = req.body.reason || "No reason provided";
 
   order.statusHistory.push({
-    status: "Returned",
+    status: "Return Requested",
     note: req.body.reason || "Return request submitted",
     updatedBy: req.user._id.toString(),
   });
