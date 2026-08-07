@@ -20,10 +20,60 @@ exports.protect = asyncHandler(async (req, res, next) => {
   }
 });
 
+function capitalizeStrings(obj) {
+  if (!obj || typeof obj !== "object") return;
+  
+  for (const key of Object.keys(obj)) {
+    const value = obj[key];
+    if (typeof value === "string") {
+      const lowerKey = key.toLowerCase();
+      if (
+        lowerKey.includes("id") ||
+        lowerKey.includes("url") ||
+        lowerKey.includes("image") ||
+        lowerKey.includes("email") ||
+        lowerKey.includes("status") ||
+        lowerKey.includes("role") ||
+        lowerKey.includes("key") ||
+        lowerKey.includes("slug") ||
+        lowerKey.includes("hex") ||
+        lowerKey.includes("logo") ||
+        lowerKey.includes("token")
+      ) {
+        continue;
+      }
+      
+      if (/^[0-9a-fA-F]{24}$/.test(value)) {
+        continue;
+      }
+      
+      if (
+        value.startsWith("http://") ||
+        value.startsWith("https://") ||
+        value.startsWith("data:") ||
+        value.includes("@")
+      ) {
+        continue;
+      }
+      
+      if (value.length > 0 && /[a-z]/.test(value.charAt(0))) {
+        obj[key] = value.charAt(0).toUpperCase() + value.slice(1);
+      }
+    } else if (typeof value === "object") {
+      capitalizeStrings(value);
+    }
+  }
+}
+
 exports.requireAdmin = (req, res, next) => {
   if (req.user?.role !== "admin" && req.user?.role !== "superadmin") {
     res.status(403);
     throw new Error("Admin access required");
   }
+  
+  if (req.body) {
+    capitalizeStrings(req.body);
+  }
+  
   next();
 };
