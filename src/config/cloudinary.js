@@ -11,13 +11,20 @@ let storage;
 
 const isS3Configured =
   process.env.AWS_ACCESS_KEY_ID &&
+  !process.env.AWS_ACCESS_KEY_ID.includes("your_") &&
   process.env.AWS_SECRET_ACCESS_KEY &&
-  process.env.AWS_BUCKET_NAME;
+  !process.env.AWS_SECRET_ACCESS_KEY.includes("your_") &&
+  process.env.AWS_BUCKET_NAME &&
+  !process.env.AWS_BUCKET_NAME.includes("your_");
 
 const isCloudinaryConfigured = 
   process.env.CLOUDINARY_CLOUD_NAME && 
+  !process.env.CLOUDINARY_CLOUD_NAME.includes("your_") &&
   process.env.CLOUDINARY_API_KEY && 
-  process.env.CLOUDINARY_API_SECRET;
+  !process.env.CLOUDINARY_API_KEY.includes("your_") &&
+  process.env.CLOUDINARY_API_SECRET &&
+  !process.env.CLOUDINARY_API_SECRET.includes("your_");
+
 
 if (isS3Configured) {
   console.log("Configuring AWS S3 Storage for uploads...");
