@@ -46,20 +46,25 @@ exports.login = asyncHandler(async (req, res) => {
 });
 
 exports.clerkSync = asyncHandler(async (req, res) => {
-  const { email, name, clerkId, avatar } = req.body;
+  const { email, name, clerkId, avatar, mode } = req.body;
   if (!email) {
     res.status(400);
     throw new Error("Email is required for Clerk sync");
   }
 
-  let user = await User.findOne({ email });
+  const normalizedEmail = email.toLowerCase().trim();
+  let user = await User.findOne({ email: normalizedEmail });
 
   if (!user) {
-    // Generate a secure random password since authentications are managed by Clerk
+    if (mode === "login") {
+      res.status(404);
+      throw new Error(`No account found with ${normalizedEmail}. Please sign up first to create an account.`);
+    }
+
     const randomPassword = crypto.randomBytes(16).toString("hex");
     user = await User.create({
-      name: name || "Clerk User",
-      email: email.toLowerCase().trim(),
+      name: name || "Google User",
+      email: normalizedEmail,
       password: randomPassword,
       clerkId: clerkId,
       avatar: avatar || "",
@@ -82,6 +87,68 @@ exports.clerkSync = asyncHandler(async (req, res) => {
     if (updated) {
       await user.save();
     }
+  }
+
+  res.json({
+    user: sanitize(user),
+    token: signToken({ id: user._id, role: user.role }),
+  });
+});
+
+exports.googleAuth = asyncHandler(async (req, res) => {
+  const { idToken, mode } = req.body;
+  if (!idToken) {
+    res.status(400);
+    throw new Error("Google ID token is required");
+  }
+
+  // Verify the ID token with Google's tokeninfo endpoint
+  const googleRes = await fetch(
+    `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`
+  );
+
+  if (!googleRes.ok) {
+    res.status(401);
+    throw new Error("Invalid Google token");
+  }
+
+  const payload = await googleRes.json();
+
+  if (!payload.email_verified || payload.email_verified === "false") {
+    res.status(401);
+    throw new Error("Google account email is not verified");
+  }
+
+  const { email, name, sub: googleId, picture: avatar } = payload;
+  const normalizedEmail = email.toLowerCase().trim();
+
+  // Find existing user by googleId or email
+  let user = await User.findOne({ $or: [{ googleId }, { email: normalizedEmail }] });
+
+  if (!user) {
+    if (mode === "login") {
+      res.status(404);
+      throw new Error(`No account found for ${normalizedEmail}. Please sign up first to create your account.`);
+    }
+
+    // Create new Google user
+    user = await User.create({
+      name: name || "Google User",
+      email: normalizedEmail,
+      googleId,
+      avatar: avatar || "",
+      authProvider: "google",
+      role: "user",
+    });
+  } else {
+    // Merge Google info into existing user
+    let updated = false;
+    if (!user.googleId) { user.googleId = googleId; updated = true; }
+    if (!user.authProvider || user.authProvider === "local") {
+      user.authProvider = "google"; updated = true;
+    }
+    if (avatar && user.avatar !== avatar) { user.avatar = avatar; updated = true; }
+    if (updated) await user.save();
   }
 
   res.json({

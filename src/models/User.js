@@ -5,7 +5,7 @@ const userSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
     email: { type: String, required: true, unique: true, lowercase: true, index: true },
-    password: { type: String, required: true, minlength: 8, select: false },
+    password: { type: String, minlength: 8, select: false },
     role: { type: String, enum: ["user", "admin", "superadmin"], default: "user" },
     jobTitle: { type: String, default: "" },
     phone: String,
@@ -14,13 +14,18 @@ const userSchema = new mongoose.Schema(
     resetToken: String,
     resetTokenExpiry: Date,
     isDeleted: { type: Boolean, default: false },
-    deletedAt: Date,
     clerkId: { type: String, index: true },
+    googleId: { type: String, index: true, sparse: true },
+    authProvider: { type: String, enum: ["local", "google"], default: "local" },
   },
   { timestamps: true },
 );
 
 userSchema.pre("validate", function (next) {
+  // Password is required for local auth only
+  if (this.authProvider === "local" && this.isNew && !this.password) {
+    this.invalidate("password", "Password is required for local accounts");
+  }
   if (this.address && typeof this.address !== "string") {
     if (typeof this.address === "object") {
       try {
@@ -41,7 +46,7 @@ userSchema.pre("validate", function (next) {
 });
 
 userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
+  if (!this.isModified("password") || !this.password) return next();
   this.password = await bcrypt.hash(this.password, 12);
   next();
 });
