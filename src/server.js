@@ -22,30 +22,41 @@ app.use(
     crossOriginResourcePolicy: { policy: "cross-origin" },
   })
 );
-const allowedOrigins = process.env.CLIENT_URL?.split(",") ?? [];
+const allowedOrigins = (process.env.CLIENT_URL?.split(",") ?? [])
+  .map((o) => o.trim().replace(/\/$/, ""))
+  .filter(Boolean);
+
 app.use(
   cors({
     origin: function (origin, callback) {
       if (!origin) return callback(null, true);
+      const cleanOrigin = origin.replace(/\/$/, "");
       const isLocalhost =
-        origin.startsWith("http://localhost:") ||
-        origin.startsWith("http://127.0.0.1:") ||
-        origin === "http://localhost" ||
-        origin === "http://127.0.0.1";
+        cleanOrigin.startsWith("http://localhost:") ||
+        cleanOrigin.startsWith("http://127.0.0.1:") ||
+        cleanOrigin === "http://localhost" ||
+        cleanOrigin === "http://127.0.0.1";
+      const isVercel = cleanOrigin.endsWith(".vercel.app");
+
       if (
         isLocalhost ||
-        allowedOrigins.includes(origin) ||
+        isVercel ||
+        allowedOrigins.includes(cleanOrigin) ||
         allowedOrigins.length === 0 ||
         allowedOrigins.includes("*")
       ) {
         callback(null, true);
       } else {
-        callback(new Error(`Origin ${origin} not allowed by CORS`));
+        console.warn(`Blocked by CORS: ${origin}`);
+        callback(null, false);
       }
     },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "Cookie", "X-Requested-With"],
   })
 );
+app.options("*", cors());
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
