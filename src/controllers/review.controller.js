@@ -19,10 +19,8 @@ const recalcRating = async (productId) => {
     if (!targetProduct) return;
     const targetId = targetProduct._id;
 
-    // Match reviews by ObjectId OR by slug string
-    const reviews = await Review.find({
-      $or: [{ product: targetId }, { product: targetProduct.slug }],
-    });
+    // Only query by ObjectId — Review.product is typed as ObjectId, passing a slug string causes CastError
+    const reviews = await Review.find({ product: targetId }).catch(() => []);
 
     const count = reviews.length;
     const avg =

@@ -213,10 +213,16 @@ exports.get = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error("Product not found");
   }
-  // Count reviews by both ObjectId and slug to handle legacy slug-stored references
-  const reviews = await Review.find({
-    $or: [{ product: product._id }, { product: product.slug }],
-  });
+
+  // Only query by ObjectId — Review.product is typed as ObjectId, passing a string causes CastError
+  let reviews = [];
+  try {
+    reviews = await Review.find({ product: product._id });
+  } catch (reviewErr) {
+    console.warn("Could not fetch reviews for product:", reviewErr.message);
+    reviews = [];
+  }
+
   const obj = product.toObject();
   obj.reviewCount = reviews.length;
   obj.rating =
@@ -231,10 +237,8 @@ exports.syncReviewCounts = asyncHandler(async (req, res) => {
   const products = await Product.find({});
   const updates = await Promise.all(
     products.map(async (product) => {
-      // Count reviews by both ObjectId and slug to handle legacy slug-stored references
-      const reviews = await Review.find({
-        $or: [{ product: product._id }, { product: product.slug }],
-      });
+      // Only query by ObjectId to avoid CastError — Review.product is typed as ObjectId
+      const reviews = await Review.find({ product: product._id }).catch(() => []);
       const count = reviews.length;
       const avg =
         count > 0
