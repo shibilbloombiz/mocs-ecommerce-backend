@@ -106,8 +106,11 @@ exports.list = asyncHandler(async (req, res) => {
     q.$or = [
       { name: { $regex: search, $options: "i" } },
       { artNumber: { $regex: search, $options: "i" } },
+      { slug: { $regex: search, $options: "i" } },
       { description: { $regex: search, $options: "i" } },
-      { collection: { $regex: search, $options: "i" } }
+      { collection: { $regex: search, $options: "i" } },
+      { brand: { $regex: search, $options: "i" } },
+      { "colors.name": { $regex: search, $options: "i" } },
     ];
   }
   if (category) q.category = category;
