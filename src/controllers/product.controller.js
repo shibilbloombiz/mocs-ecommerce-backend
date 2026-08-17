@@ -1,5 +1,6 @@
 const asyncHandler = require("express-async-handler");
 const Product = require("../models/Product");
+const Review = require("../models/Review");
 const ProductImage = require("../models/ProductImage");
 const path = require("path");
 const { cloudinary } = require("../config/cloudinary");
@@ -119,11 +120,76 @@ exports.list = asyncHandler(async (req, res) => {
   }
 
   const skip = (Number(page) - 1) * Number(limit);
-  const [items, total] = await Promise.all([
-    Product.find(q).sort(sort).skip(skip).limit(Number(limit)).populate("category"),
+
+  // Use $lookup to get live review count + avg rating in one aggregation query.
+  // Uses a pipeline-based $lookup so reviews stored with either ObjectId or slug string are counted.
+  const pipeline = [
+    { $match: q },
+    { $sort: { createdAt: -1 } },
+    { $skip: skip },
+    { $limit: Number(limit) },
+    {
+      $lookup: {
+        from: "reviews",
+        let: { productId: "$_id", productSlug: "$slug" },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $or: [
+                  { $eq: ["$product", "$$productId"] },
+                  { $eq: ["$product", "$$productSlug"] },
+                ],
+              },
+            },
+          },
+        ],
+        as: "_reviews",
+      },
+    },
+    {
+      $addFields: {
+        reviewCount: { $size: "$_reviews" },
+        rating: {
+          $cond: {
+            if: { $gt: [{ $size: "$_reviews" }, 0] },
+            then: {
+              $round: [
+                { $divide: [{ $sum: "$_reviews.rating" }, { $size: "$_reviews" }] },
+                1,
+              ],
+            },
+            else: { $ifNull: ["$rating", 5] },
+          },
+        },
+      },
+    },
+    { $project: { _reviews: 0 } },
+  ];
+
+  // Apply sort separately since pipeline sort must come first
+  if (sort) {
+    const sortField = sort.startsWith("-") ? sort.slice(1) : sort;
+    const sortDir = sort.startsWith("-") ? -1 : 1;
+    pipeline.splice(1, 1, { $sort: { [sortField]: sortDir } });
+  }
+
+  const [enhancedItems, total] = await Promise.all([
+    Product.aggregate(pipeline).collation({ locale: "en" }),
     Product.countDocuments(q),
   ]);
-  res.json({ items, total, page: Number(page), pages: Math.ceil(total / Number(limit)) });
+
+  // Populate category for each item (aggregation doesn't auto-populate)
+  const Category = require("../models/Category");
+  const categoryIds = [...new Set(enhancedItems.map((p) => p.category?.toString()).filter(Boolean))];
+  const categories = await Category.find({ _id: { $in: categoryIds } }).lean();
+  const catMap = new Map(categories.map((c) => [c._id.toString(), c]));
+  const finalItems = enhancedItems.map((p) => ({
+    ...p,
+    category: catMap.get(p.category?.toString()) || p.category,
+  }));
+
+  res.json({ items: finalItems, total, page: Number(page), pages: Math.ceil(total / Number(limit)) });
 });
 
 exports.get = asyncHandler(async (req, res) => {
@@ -132,19 +198,89 @@ exports.get = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error("Product not found");
   }
-  res.json(product);
+  // Count reviews by both ObjectId and slug to handle legacy slug-stored references
+  const reviews = await Review.find({
+    $or: [{ product: product._id }, { product: product.slug }],
+  });
+  const obj = product.toObject();
+  obj.reviewCount = reviews.length;
+  obj.rating =
+    reviews.length > 0
+      ? Math.round((reviews.reduce((acc, r) => acc + (Number(r.rating) || 5), 0) / reviews.length) * 10) / 10
+      : (product.rating || 5);
+  res.json(obj);
+});
+
+// POST /api/products/sync-review-counts — repair stale reviewCount on all products
+exports.syncReviewCounts = asyncHandler(async (req, res) => {
+  const products = await Product.find({});
+  const updates = await Promise.all(
+    products.map(async (product) => {
+      // Count reviews by both ObjectId and slug to handle legacy slug-stored references
+      const reviews = await Review.find({
+        $or: [{ product: product._id }, { product: product.slug }],
+      });
+      const count = reviews.length;
+      const avg =
+        count > 0
+          ? Math.round((reviews.reduce((acc, r) => acc + (Number(r.rating) || 5), 0) / count) * 10) / 10
+          : 5;
+      await Product.findByIdAndUpdate(product._id, { reviewCount: count, rating: count > 0 ? avg : 5 });
+      return { id: product._id, reviewCount: count, rating: count > 0 ? avg : 5 };
+    })
+  );
+  res.json({ synced: updates.length, updates });
 });
 
 exports.related = asyncHandler(async (req, res) => {
   const product = await Product.findById(req.params.id);
   if (!product) { res.status(404); throw new Error("Product not found"); }
-  const items = await Product.find({
-    _id: { $ne: product._id },
-    category: product.category,
-    isPublished: true,
-    isDeleted: { $ne: true },
-  }).limit(8);
-  res.json(items);
+  const [items, allReviews] = await Promise.all([
+    Product.find({
+      _id: { $ne: product._id },
+      category: product.category,
+      isPublished: true,
+      isDeleted: { $ne: true },
+    }).limit(8),
+    Review.find({}).select("product rating"),
+  ]);
+
+  const statsMap = new Map();
+  if (Array.isArray(allReviews)) {
+    allReviews.forEach((r) => {
+      if (!r.product) return;
+      const key = r.product.toString();
+      const cur = statsMap.get(key) || { count: 0, sum: 0 };
+      cur.count += 1;
+      cur.sum += Number(r.rating) || 5;
+      statsMap.set(key, cur);
+    });
+  }
+
+  const enhancedItems = items.map((prod) => {
+    const obj = prod.toObject ? prod.toObject() : { ...prod };
+    const idKey = obj._id ? obj._id.toString() : "";
+    const slugKey = obj.slug;
+    const nameKey = obj.name;
+
+    const statId = idKey ? statsMap.get(idKey) : null;
+    const statSlug = slugKey ? statsMap.get(slugKey) : null;
+    const statName = nameKey ? statsMap.get(nameKey) : null;
+
+    const totalCount = (statId?.count || 0) + (statSlug?.count || 0) + (statName?.count || 0);
+    const totalSum = (statId?.sum || 0) + (statSlug?.sum || 0) + (statName?.sum || 0);
+
+    if (totalCount > 0) {
+      obj.reviewCount = totalCount;
+      obj.rating = Math.round((totalSum / totalCount) * 10) / 10;
+    } else {
+      obj.reviewCount = obj.reviewCount || 0;
+      obj.rating = obj.rating || 5;
+    }
+    return obj;
+  });
+
+  res.json(enhancedItems);
 });
 
 exports.create = asyncHandler(async (req, res) => {

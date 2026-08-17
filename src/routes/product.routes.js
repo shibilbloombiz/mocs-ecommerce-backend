@@ -13,6 +13,7 @@ router.get("/:id", ctrl.get);
 
 router.use(protect, requireAdmin);
 
+router.post("/sync-review-counts", ctrl.syncReviewCounts);
 router.post("/upload", upload.single("image"), ctrl.uploadSingleImage);
 
 router.post("/", ctrl.create);

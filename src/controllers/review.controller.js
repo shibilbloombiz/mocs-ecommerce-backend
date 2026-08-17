@@ -1,33 +1,141 @@
 const asyncHandler = require("express-async-handler");
+const mongoose = require("mongoose");
 const Review = require("../models/Review");
 const Product = require("../models/Product");
 
 const recalcRating = async (productId) => {
-  const stats = await Review.aggregate([
-    { $match: { product: productId } },
-    { $group: { _id: "$product", avg: { $avg: "$rating" }, count: { $sum: 1 } } },
-  ]);
-  const { avg = 0, count = 0 } = stats[0] || {};
-  await Product.findByIdAndUpdate(productId, { rating: avg, reviewCount: count });
+  try {
+    if (!productId) return;
+    let targetProduct = null;
+    if (mongoose.Types.ObjectId.isValid(productId)) {
+      targetProduct = await Product.findById(productId);
+    }
+    if (!targetProduct) {
+      targetProduct = await Product.findOne({
+        $or: [{ slug: productId }, { name: new RegExp(`^${productId}$`, "i") }],
+      });
+    }
+
+    if (!targetProduct) return;
+    const targetId = targetProduct._id;
+
+    // Match reviews by ObjectId OR by slug string
+    const reviews = await Review.find({
+      $or: [{ product: targetId }, { product: targetProduct.slug }],
+    });
+
+    const count = reviews.length;
+    const avg =
+      count > 0
+        ? Math.round((reviews.reduce((acc, r) => acc + (Number(r.rating) || 5), 0) / count) * 10) / 10
+        : 5;
+
+    await Product.findByIdAndUpdate(targetId, {
+      rating: count > 0 ? avg : 5,
+      reviewCount: count,
+    });
+  } catch (err) {
+    console.error("Recalculate rating error:", err);
+  }
 };
 
 // GET /api/reviews/:productId?color=
 exports.list = asyncHandler(async (req, res) => {
-  const q = { product: req.params.productId };
+  const { productId } = req.params;
+  let targetProduct = null;
+  if (mongoose.Types.ObjectId.isValid(productId)) {
+    targetProduct = await Product.findById(productId);
+  }
+  if (!targetProduct) {
+    targetProduct = await Product.findOne({
+      $or: [{ slug: productId }, { name: new RegExp(`^${productId}$`, "i") }],
+    });
+  }
+
+  const q = {};
+  if (targetProduct) {
+    q.$or = [{ product: targetProduct._id }, { product: targetProduct.slug }, { product: productId }];
+  } else {
+    q.product = productId;
+  }
+
   if (req.query.color) q.color = req.query.color;
   const items = await Review.find(q).sort("-createdAt").populate("user", "name avatar");
   res.json(items);
 });
 
 exports.create = asyncHandler(async (req, res) => {
-  const { product, rating, text, color, size, images } = req.body;
-  const review = await Review.create({
-    product, rating, text, color, size, images,
-    user: req.user._id,
-    verifiedPurchase: true, // TODO: check order history
+  const { product, productId, rating, text, comment, color, size, images } = req.body;
+  const rawId = product || productId;
+
+  if (!rawId) {
+    res.status(400);
+    throw new Error("Please select a valid product to review.");
+  }
+
+  let targetProduct = null;
+  if (mongoose.Types.ObjectId.isValid(rawId)) {
+    targetProduct = await Product.findById(rawId);
+  }
+  if (!targetProduct) {
+    targetProduct = await Product.findOne({
+      $or: [{ slug: rawId }, { name: new RegExp(`^${rawId}$`, "i") }],
+    });
+  }
+
+  if (!targetProduct) {
+    res.status(404);
+    throw new Error("Product not found");
+  }
+
+  const targetProductId = targetProduct._id;
+
+  const reviewRating = Number(rating);
+  if (!reviewRating || reviewRating < 1 || reviewRating > 5) {
+    res.status(400);
+    throw new Error("Please select a rating between 1 and 5 stars.");
+  }
+
+  const reviewText = (text || comment || "").trim();
+  if (!reviewText) {
+    res.status(400);
+    throw new Error("Please write a short review before submitting.");
+  }
+
+  // Check if review already exists for this user and product
+  let review = await Review.findOne({
+    $or: [
+      { product: targetProductId, user: req.user._id },
+      { product: targetProduct.slug, user: req.user._id },
+    ],
   });
-  await recalcRating(product);
-  res.status(201).json(review);
+
+  if (review) {
+    review.product = targetProductId;
+    review.rating = reviewRating;
+    review.text = reviewText;
+    if (color) review.color = color;
+    if (size) review.size = size;
+    if (images) review.images = images;
+    review.verifiedPurchase = true;
+    await review.save();
+  } else {
+    review = await Review.create({
+      product: targetProductId,
+      rating: reviewRating,
+      text: reviewText,
+      color: color || "Default",
+      size: size || null,
+      images: images || [],
+      user: req.user._id,
+      verifiedPurchase: true,
+    });
+  }
+
+  await recalcRating(targetProductId);
+
+  const populated = await Review.findById(review._id).populate("user", "name avatar");
+  res.status(201).json(populated);
 });
 
 exports.update = asyncHandler(async (req, res) => {
@@ -38,7 +146,8 @@ exports.update = asyncHandler(async (req, res) => {
   );
   if (!review) { res.status(404); throw new Error("Review not found"); }
   await recalcRating(review.product);
-  res.json(review);
+  const populated = await Review.findById(review._id).populate("user", "name avatar");
+  res.json(populated);
 });
 
 exports.remove = asyncHandler(async (req, res) => {
