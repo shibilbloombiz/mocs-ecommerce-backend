@@ -42,23 +42,35 @@ const recalcRating = async (productId) => {
 // GET /api/reviews/:productId?color=
 exports.list = asyncHandler(async (req, res) => {
   const { productId } = req.params;
+  if (!productId) return res.json([]);
+
   let targetProduct = null;
   if (mongoose.Types.ObjectId.isValid(productId)) {
     targetProduct = await Product.findById(productId);
   }
   if (!targetProduct) {
     targetProduct = await Product.findOne({
-      $or: [{ slug: productId }, { name: new RegExp(`^${productId}$`, "i") }],
+      $or: [
+        { slug: productId },
+        { artNumber: productId },
+        { name: new RegExp(`^${productId}$`, "i") }
+      ],
     });
   }
 
-  const q = {};
+  const queryConditions = [];
   if (targetProduct) {
-    q.$or = [{ product: targetProduct._id }, { product: targetProduct.slug }, { product: productId }];
-  } else {
-    q.product = productId;
+    queryConditions.push({ product: targetProduct._id });
+  } else if (mongoose.Types.ObjectId.isValid(productId)) {
+    queryConditions.push({ product: productId });
   }
 
+  // If no matching product exists in MongoDB and productId is not an ObjectId, return empty array
+  if (queryConditions.length === 0) {
+    return res.json([]);
+  }
+
+  const q = queryConditions.length === 1 ? queryConditions[0] : { $or: queryConditions };
   if (req.query.color) q.color = req.query.color;
   const items = await Review.find(q).sort("-createdAt").populate("user", "name avatar");
   res.json(items);

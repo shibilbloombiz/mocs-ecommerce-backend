@@ -193,7 +193,22 @@ exports.list = asyncHandler(async (req, res) => {
 });
 
 exports.get = asyncHandler(async (req, res) => {
-  const product = await Product.findById(req.params.id).populate("category");
+  let product = null;
+  const mongoose = require("mongoose");
+  
+  if (mongoose.Types.ObjectId.isValid(req.params.id)) {
+    product = await Product.findById(req.params.id).populate("category");
+  }
+  if (!product) {
+    product = await Product.findOne({
+      $or: [
+        { slug: req.params.id },
+        { artNumber: req.params.id },
+        { name: new RegExp(`^${req.params.id}$`, "i") }
+      ]
+    }).populate("category");
+  }
+
   if (!product || (product.isDeleted && req.query.adminMode !== "true")) {
     res.status(404);
     throw new Error("Product not found");
