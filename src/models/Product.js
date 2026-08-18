@@ -65,6 +65,28 @@ const productSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
+productSchema.index(
+  {
+    name: "text",
+    description: "text",
+    brand: "text",
+    collection: "text",
+    artNumber: "text",
+    "colors.name": "text",
+  },
+  {
+    weights: {
+      name: 10,
+      artNumber: 8,
+      collection: 6,
+      "colors.name": 5,
+      brand: 4,
+      description: 2,
+    },
+    name: "ProductSearchTextIndex",
+  },
+);
+
 productSchema.index({ category: 1, price: 1 });
 
 module.exports = mongoose.model("Product", productSchema);

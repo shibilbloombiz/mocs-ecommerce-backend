@@ -1,9 +1,86 @@
 const asyncHandler = require("express-async-handler");
 const Product = require("../models/Product");
+const Category = require("../models/Category");
 const Review = require("../models/Review");
 const ProductImage = require("../models/ProductImage");
 const path = require("path");
 const { cloudinary } = require("../config/cloudinary");
+
+/**
+ * Natural language search parser
+ * Extracts { keyword, priceMin, priceMax } from queries like "shoes under 500", "sandals above 300", "shoe between 200 and 400"
+ */
+const parseSearchQuery = (input) => {
+  if (!input || typeof input !== "string") {
+    return { raw: "", keyword: "" };
+  }
+
+  const raw = input.trim();
+  let workingText = raw;
+  let priceMin = undefined;
+  let priceMax = undefined;
+
+  const currPrefix = "(?:₹|rs\\.?|inr|\\$)?\\s*";
+  const currSuffix = "\\s*(?:₹|rs\\.?|inr|\\$|rupees|bucks)?";
+
+  // 1. "between X and Y" / "from X to Y" / "X to Y" / "X - Y"
+  const betweenRegex = new RegExp(
+    `\\b(?:between|from)?\\s*${currPrefix}(\\d+(?:\\.\\d+)?)${currSuffix}\\s+(?:and|to|-)\\s+${currPrefix}(\\d+(?:\\.\\d+)?)${currSuffix}\\b`,
+    "i"
+  );
+  const betweenMatch = workingText.match(betweenRegex);
+  if (
+    betweenMatch &&
+    (betweenMatch[0].toLowerCase().includes("between") ||
+      betweenMatch[0].toLowerCase().includes("from") ||
+      betweenMatch[0].includes("-") ||
+      betweenMatch[0].toLowerCase().includes("to"))
+  ) {
+    const val1 = parseFloat(betweenMatch[1]);
+    const val2 = parseFloat(betweenMatch[2]);
+    priceMin = Math.min(val1, val2);
+    priceMax = Math.max(val1, val2);
+    workingText = workingText.replace(betweenMatch[0], " ");
+  }
+
+  // 2. "under X", "below X", "less than X", "within X", "upto X", "max X"
+  if (priceMax === undefined) {
+    const underRegex = new RegExp(
+      `\\b(?:under|below|less\\s+than|upto|up\\s+to|within|max(?:imum)?)\\s+${currPrefix}(\\d+(?:\\.\\d+)?)${currSuffix}\\b`,
+      "i"
+    );
+    const underMatch = workingText.match(underRegex);
+    if (underMatch) {
+      priceMax = parseFloat(underMatch[1]);
+      workingText = workingText.replace(underMatch[0], " ");
+    }
+  }
+
+  // 3. "above X", "over X", "greater than X", "more than X", "min X", "starting from X"
+  if (priceMin === undefined) {
+    const aboveRegex = new RegExp(
+      `\\b(?:above|over|greater\\s+than|more\\s+than|min(?:imum)?|starting\\s+(?:from|at)?)\\s+${currPrefix}(\\d+(?:\\.\\d+)?)${currSuffix}\\b`,
+      "i"
+    );
+    const aboveMatch = workingText.match(aboveRegex);
+    if (aboveMatch) {
+      priceMin = parseFloat(aboveMatch[1]);
+      workingText = workingText.replace(aboveMatch[0], " ");
+    }
+  }
+
+  // Clean up remaining keyword
+  const keyword = workingText.replace(/\s+/g, " ").trim();
+
+  const result = {
+    raw,
+    keyword: keyword || raw,
+  };
+  if (priceMin !== undefined) result.priceMin = priceMin;
+  if (priceMax !== undefined) result.priceMax = priceMax;
+
+  return result;
+};
 
 const getPublicIdFromUrl = (url) => {
   if (typeof url !== "string" || !url.includes("cloudinary.com") || !url.includes("/upload/")) return null;
@@ -102,24 +179,58 @@ exports.list = asyncHandler(async (req, res) => {
     q.isPublished = true;
   }
 
+  // Extract natural language price expressions if present in search query
+  let effectiveSearch = search;
+  let effectiveMinPrice = minPrice ? Number(minPrice) : undefined;
+  let effectiveMaxPrice = maxPrice ? Number(maxPrice) : undefined;
+
   if (search) {
-    q.$or = [
-      { name: { $regex: search, $options: "i" } },
-      { artNumber: { $regex: search, $options: "i" } },
-      { slug: { $regex: search, $options: "i" } },
-      { description: { $regex: search, $options: "i" } },
-      { collection: { $regex: search, $options: "i" } },
-      { brand: { $regex: search, $options: "i" } },
-      { "colors.name": { $regex: search, $options: "i" } },
-    ];
+    const parsed = parseSearchQuery(search);
+    if (parsed.priceMin !== undefined && effectiveMinPrice === undefined) {
+      effectiveMinPrice = parsed.priceMin;
+    }
+    if (parsed.priceMax !== undefined && effectiveMaxPrice === undefined) {
+      effectiveMaxPrice = parsed.priceMax;
+    }
+    effectiveSearch = parsed.keyword;
   }
+
+  if (effectiveSearch) {
+    // 1. Also resolve any matching category ObjectIds so searching "Women" or "Kids" matches category refs
+    let categoryIds = [];
+    try {
+      const matchingCategories = await Category.find(
+        { name: { $regex: effectiveSearch, $options: "i" } },
+        "_id"
+      );
+      categoryIds = matchingCategories.map((c) => c._id);
+    } catch (err) {
+      // ignore category lookup failure
+    }
+
+    q.$or = [
+      { name: { $regex: effectiveSearch, $options: "i" } },
+      { artNumber: { $regex: effectiveSearch, $options: "i" } },
+      { slug: { $regex: effectiveSearch, $options: "i" } },
+      { description: { $regex: effectiveSearch, $options: "i" } },
+      { collection: { $regex: effectiveSearch, $options: "i" } },
+      { brand: { $regex: effectiveSearch, $options: "i" } },
+      { "colors.name": { $regex: effectiveSearch, $options: "i" } },
+    ];
+
+    if (categoryIds.length > 0) {
+      q.$or.push({ category: { $in: categoryIds } });
+    }
+  }
+
   if (category) q.category = category;
   if (color) q["colors.name"] = color;
   if (size) q.sizes = Number(size);
-  if (minPrice || maxPrice) {
+
+  if (effectiveMinPrice !== undefined || effectiveMaxPrice !== undefined) {
     q.price = {};
-    if (minPrice) q.price.$gte = Number(minPrice);
-    if (maxPrice) q.price.$lte = Number(maxPrice);
+    if (effectiveMinPrice !== undefined) q.price.$gte = effectiveMinPrice;
+    if (effectiveMaxPrice !== undefined) q.price.$lte = effectiveMaxPrice;
   }
 
   const skip = (Number(page) - 1) * Number(limit);
