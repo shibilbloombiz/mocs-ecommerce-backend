@@ -1,4 +1,8 @@
+const path = require("path");
 require("dotenv").config();
+if (!process.env.MONGO_URI) {
+  require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
+}
 const mongoose = require("mongoose");
 const Product = require("./models/Product");
 const Category = require("./models/Category");
