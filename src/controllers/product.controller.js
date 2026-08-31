@@ -4,6 +4,7 @@ const Category = require("../models/Category");
 const Review = require("../models/Review");
 const ProductImage = require("../models/ProductImage");
 const path = require("path");
+const fs = require("fs");
 const { cloudinary } = require("../config/cloudinary");
 
 /**
@@ -115,7 +116,22 @@ const deleteProductImage = async (url, publicId) => {
     return;
   }
 
-  // 2. Clean up from Cloudinary
+  // 2. Clean up from local disk if in /uploads/
+  if (url.includes("/uploads/")) {
+    try {
+      const filename = path.basename(url.split("?")[0]);
+      const filePath = path.join(__dirname, "..", "uploads", filename);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.log(`Successfully deleted local image file: ${filename}`);
+      }
+    } catch (err) {
+      console.error("Failed to delete local image file:", err);
+    }
+    return;
+  }
+
+  // 3. Clean up from Cloudinary if legacy URL
   let actualPublicId = publicId;
   if (!actualPublicId && url.includes("cloudinary.com")) {
     actualPublicId = getPublicIdFromUrl(url);
