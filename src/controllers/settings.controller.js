@@ -1,6 +1,8 @@
 const asyncHandler = require("express-async-handler");
 const Settings = require("../models/Settings");
 const { cloudinary } = require("../config/cloudinary");
+const path = require("path");
+const fs = require("fs");
 
 function getPublicIdFromUrl(url) {
   if (typeof url !== "string" || !url.includes("cloudinary.com") || !url.includes("/upload/")) return null;
@@ -19,11 +21,11 @@ function getPublicIdFromUrl(url) {
   }
 }
 
-function extractCloudinaryUrls(obj) {
+function extractImageUrls(obj) {
   const urls = [];
   const findUrls = (val) => {
     if (typeof val === "string") {
-      if (val.includes("cloudinary.com") && val.includes("/upload/")) {
+      if ((val.includes("cloudinary.com") && val.includes("/upload/")) || val.includes("/uploads/")) {
         urls.push(val);
       }
     } else if (Array.isArray(val)) {
@@ -40,7 +42,25 @@ function extractCloudinaryUrls(obj) {
   return urls;
 }
 
-const deleteCloudinaryUrl = async (url) => {
+const deleteImageUrl = async (url) => {
+  if (!url || typeof url !== "string") return;
+
+  // 1. Local disk cleanup
+  if (url.includes("/uploads/")) {
+    try {
+      const filename = path.basename(url.split("?")[0]);
+      const filePath = path.join(__dirname, "..", "uploads", filename);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.log(`Successfully deleted local settings image: ${filename}`);
+      }
+    } catch (err) {
+      console.error("Failed to delete local settings image:", err);
+    }
+    return;
+  }
+
+  // 2. Legacy Cloudinary cleanup
   const publicId = getPublicIdFromUrl(url);
   if (publicId) {
     try {
@@ -69,15 +89,15 @@ exports.updateSettings = asyncHandler(async (req, res) => {
   if (setting) {
     // Find deleted images to clean up
     try {
-      const oldUrls = extractCloudinaryUrls(setting.value);
-      const newUrls = new Set(extractCloudinaryUrls(value));
+      const oldUrls = extractImageUrls(setting.value);
+      const newUrls = new Set(extractImageUrls(value));
       const deletedUrls = oldUrls.filter(url => !newUrls.has(url));
       
       for (const url of deletedUrls) {
-        await deleteCloudinaryUrl(url);
+        await deleteImageUrl(url);
       }
     } catch (cleanupErr) {
-      console.error("Error cleaning up settings Cloudinary images:", cleanupErr);
+      console.error("Error cleaning up settings images:", cleanupErr);
     }
 
     setting.value = value;
