@@ -1,4 +1,4 @@
-// Multer storage for product/review/category/user uploads.
+// Multer disk storage for product/banner/hero/review/category/user uploads.
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
@@ -11,31 +11,73 @@ if (!fs.existsSync(uploadsDir)) {
 
 console.log("Using local Multer disk storage for uploads at:", uploadsDir);
 
+const sanitizeName = (str) => {
+  return String(str || "")
+    .toLowerCase()
+    .trim()
+    .replace(/\.[^/.]+$/, "") // strip extension
+    .replace(/[^a-z0-9_-]+/g, "-") // replace non-alphanumerics with hyphens
+    .replace(/-+/g, "-") // collapse repeated hyphens
+    .replace(/^-|-$/g, ""); // trim leading/trailing hyphens
+};
+
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
+  destination: (_req, _file, cb) => {
     cb(null, uploadsDir);
   },
   filename: (req, file, cb) => {
-    // Generate clean, collision-free filename: timestamp-random.ext
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    const cleanExt = path.extname(file.originalname).toLowerCase() || ".jpg";
-    cb(null, `img-${uniqueSuffix}${cleanExt}`);
+    // 1. Detect category / type from query, body, header, or fieldname
+    const rawType =
+      req.query?.type ||
+      req.body?.type ||
+      req.headers?.["x-upload-type"] ||
+      (file.fieldname && !["image", "images", "file", "files"].includes(file.fieldname) ? file.fieldname : "") ||
+      "";
+
+    const typePrefix = sanitizeName(rawType);
+
+    // 2. Extract and sanitize original file base name
+    const rawBaseName = path.parse(file.originalname).name || "image";
+    let baseName = sanitizeName(rawBaseName);
+
+    // Generic placeholder names to replace with descriptive names
+    const genericNames = ["image", "img", "upload", "file", "blob", "untitled", "picture", "photo", "download"];
+    if (genericNames.includes(baseName) || !baseName) {
+      baseName = typePrefix || "image";
+    }
+
+    // 3. Build descriptive prefix (e.g. banner-summer-sale or hero-slide)
+    let finalPrefix = baseName;
+    if (typePrefix && !baseName.startsWith(typePrefix)) {
+      finalPrefix = `${typePrefix}-${baseName}`;
+    }
+
+    // Truncate to reasonable length
+    finalPrefix = finalPrefix.slice(0, 45).replace(/-+$/, "");
+
+    // 4. Generate unique timestamp + random suffix to prevent collisions
+    const timestamp = Date.now();
+    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+    const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
+
+    const generatedFilename = `${finalPrefix}-${timestamp}-${randomSuffix}${ext}`;
+    cb(null, generatedFilename);
   },
 });
 
 const upload = multer({
   storage,
-  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB file limit
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB file limit
   fileFilter: (_req, file, cb) => {
     // Validate image mime types
     if (!file.mimetype || !file.mimetype.startsWith("image/")) {
-      return cb(new Error("Only image files (JPG, PNG, WebP, AVIF, SVG) are allowed"));
+      return cb(new Error("Only image files (JPG, PNG, WebP, AVIF, SVG, GIF) are allowed"));
     }
     cb(null, true);
   },
 });
 
-// Fallback dummy Cloudinary object to prevent breakage in existing references
+// Fallback dummy Cloudinary object to prevent breakage in any existing references
 const cloudinary = {
   uploader: {
     upload: async () => ({ url: "", public_id: "" }),
