@@ -1,31 +1,13 @@
 const asyncHandler = require("express-async-handler");
 const Settings = require("../models/Settings");
-const { cloudinary } = require("../config/cloudinary");
 const path = require("path");
 const fs = require("fs");
-
-function getPublicIdFromUrl(url) {
-  if (typeof url !== "string" || !url.includes("cloudinary.com") || !url.includes("/upload/")) return null;
-  try {
-    const parts = url.split("/upload/");
-    if (parts.length < 2) return null;
-    let pathPart = parts[1];
-    // Remove version segment (e.g. v12345678/)
-    pathPart = pathPart.replace(/^v\d+\//, "");
-    // Remove file extension
-    pathPart = pathPart.replace(/\.[^/.]+$/, "");
-    return pathPart;
-  } catch (err) {
-    console.error("Error extracting public ID:", err);
-    return null;
-  }
-}
 
 function extractImageUrls(obj) {
   const urls = [];
   const findUrls = (val) => {
     if (typeof val === "string") {
-      if ((val.includes("cloudinary.com") && val.includes("/upload/")) || val.includes("/uploads/")) {
+      if (val.includes("/uploads/")) {
         urls.push(val);
       }
     } else if (Array.isArray(val)) {
@@ -45,7 +27,7 @@ function extractImageUrls(obj) {
 const deleteImageUrl = async (url) => {
   if (!url || typeof url !== "string") return;
 
-  // 1. Local disk cleanup
+  // Local disk cleanup
   if (url.includes("/uploads/")) {
     try {
       const filename = path.basename(url.split("?")[0]);
@@ -58,18 +40,6 @@ const deleteImageUrl = async (url) => {
       console.error("Failed to delete local settings image:", err);
     }
     return;
-  }
-
-  // 2. Legacy Cloudinary cleanup
-  const publicId = getPublicIdFromUrl(url);
-  if (publicId) {
-    try {
-      console.log(`Deleting old Cloudinary image: ${publicId}`);
-      await cloudinary.uploader.destroy(publicId);
-      console.log(`Successfully deleted Cloudinary image: ${publicId}`);
-    } catch (err) {
-      console.error(`Failed to delete Cloudinary image: ${publicId}`, err);
-    }
   }
 };
 

@@ -5,7 +5,6 @@ const Review = require("../models/Review");
 const ProductImage = require("../models/ProductImage");
 const path = require("path");
 const fs = require("fs");
-const { cloudinary } = require("../config/cloudinary");
 
 /**
  * Natural language search parser
@@ -83,27 +82,10 @@ const parseSearchQuery = (input) => {
   return result;
 };
 
-const getPublicIdFromUrl = (url) => {
-  if (typeof url !== "string" || !url.includes("cloudinary.com") || !url.includes("/upload/")) return null;
-  try {
-    const parts = url.split("/upload/");
-    if (parts.length < 2) return null;
-    let pathPart = parts[1];
-    // Remove version segment (e.g. v12345678/)
-    pathPart = pathPart.replace(/^v\d+\//, "");
-    // Remove file extension
-    pathPart = pathPart.replace(/\.[^/.]+$/, "");
-    return pathPart;
-  } catch (err) {
-    console.error("Error extracting public ID:", err);
-    return null;
-  }
-};
-
-const deleteProductImage = async (url, publicId) => {
+const deleteProductImage = async (url) => {
   if (!url || typeof url !== "string") return;
 
-  // 1. Clean up from MongoDB if binary
+  // 1. Clean up from MongoDB if binary image
   const match = url.match(/\/api\/products\/image\/([a-fA-F0-9]{24})/);
   if (match) {
     const imageId = match[1];
@@ -129,22 +111,6 @@ const deleteProductImage = async (url, publicId) => {
       console.error("Failed to delete local image file:", err);
     }
     return;
-  }
-
-  // 3. Clean up from Cloudinary if legacy URL
-  let actualPublicId = publicId;
-  if (!actualPublicId && url.includes("cloudinary.com")) {
-    actualPublicId = getPublicIdFromUrl(url);
-  }
-
-  if (actualPublicId && url.includes("cloudinary.com")) {
-    try {
-      console.log(`Deleting Cloudinary asset: ${actualPublicId}`);
-      await cloudinary.uploader.destroy(actualPublicId);
-      console.log(`Successfully deleted Cloudinary asset: ${actualPublicId}`);
-    } catch (err) {
-      console.error(`Failed to delete Cloudinary asset ${actualPublicId}:`, err);
-    }
   }
 };
 

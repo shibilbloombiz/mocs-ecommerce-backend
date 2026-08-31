@@ -1,7 +1,7 @@
 const router = require("express").Router();
 const ctrl = require("../controllers/product.controller");
 const { protect, requireAdmin } = require("../middleware/auth");
-const { upload } = require("../config/cloudinary");
+const { upload } = require("../config/multer");
 
 router.get("/", ctrl.list);
 router.get("/related/:id", ctrl.related);

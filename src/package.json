@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
+    "clear:products": "node clear-products.js",
     "seed:products": "node seed-products.js",
     "seed:admin": "node seed-admin.js"
   },
