@@ -17,9 +17,21 @@ const userSchema = new mongoose.Schema(
     clerkId: { type: String, index: true },
     googleId: { type: String, index: true, sparse: true },
     authProvider: { type: String, enum: ["local", "google"], default: "local" },
+    savedRefundMethod: {
+      type: { type: String, enum: ["bank", "upi", "none"], default: "none" },
+      accountHolderName: { type: String, default: "" },
+      accountNumber: { type: String, default: "" },
+      ifscCode: { type: String, default: "" },
+      bankName: { type: String, default: "" },
+      maskedAccountNumber: { type: String, default: "" },
+      upiId: { type: String, default: "" },
+      maskedUpiId: { type: String, default: "" },
+      updatedAt: { type: Date, default: Date.now },
+    },
   },
   { timestamps: true },
 );
+
 
 userSchema.pre("validate", function (next) {
   // Password is required for local auth only

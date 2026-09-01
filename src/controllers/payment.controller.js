@@ -339,6 +339,36 @@ exports.webhook = asyncHandler(async (req, res) => {
       order.paymentFailureReason = errorDescription;
       await order.save();
     }
+  } else if (event === "refund.processed" || event === "refund.created") {
+    const refundEntity = req.body.payload?.refund?.entity;
+    if (refundEntity) {
+      const paymentId = refundEntity.payment_id;
+      const refundId = refundEntity.id;
+      const refundAmount = refundEntity.amount ? refundEntity.amount / 100 : undefined;
+
+      const order = await Order.findOne({ razorpayPaymentId: paymentId });
+      if (order && order.paymentStatus !== "Refunded") {
+        order.paymentStatus = "Refunded";
+        order.orderStatus = "Refunded";
+        order.status = "refunded";
+        if (!order.refundDetails) {
+          order.refundDetails = {};
+        }
+        order.refundDetails.refundMethod = "original";
+        order.refundDetails.refundStatus = "Refunded";
+        order.refundDetails.refundTransactionId = refundId;
+        if (refundAmount) {
+          order.refundDetails.refundAmount = refundAmount;
+        }
+        order.refundDetails.refundCompletedAt = new Date();
+        order.statusHistory.push({
+          status: "Refunded",
+          note: `Refund processed via Razorpay Gateway Webhook. Ref ID: ${refundId}`,
+          updatedBy: "razorpay_webhook",
+        });
+        await order.save();
+      }
+    }
   }
 
   res.json({ status: "ok" });
@@ -373,19 +403,23 @@ exports.cancelPayment = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error("Order not found");
   }
-  if (order.user.toString() !== req.user._id.toString()) {
+  if (order.user.toString() !== req.user._id.toString() && req.user.role !== "admin" && req.user.role !== "superadmin") {
     res.status(403);
     throw new Error("Unauthorized to access this order");
   }
-  if (order.paymentStatus === "Pending" || order.paymentStatus === "pending") {
+  if (order.paymentStatus === "Pending" || order.paymentStatus === "pending" || order.paymentStatus === "Failed") {
     order.paymentStatus = "Failed";
-    order.paymentFailureReason = "Payment cancelled by user";
+    order.orderStatus = "Cancelled";
+    order.isDeleted = true;
+    order.deletedAt = new Date();
+    order.paymentFailureReason = "Payment cancelled by user before completion";
     order.statusHistory.push({
-      status: "Placed",
-      note: "Payment cancelled by customer during checkout",
+      status: "Cancelled",
+      note: "Online checkout cancelled before payment completion",
       updatedBy: req.user._id.toString(),
     });
     await order.save();
   }
   res.json({ success: true, order });
 });
+

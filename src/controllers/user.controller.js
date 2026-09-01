@@ -17,9 +17,145 @@ exports.getProfile = asyncHandler(async (req, res) => {
     address: user.address || "",
     role: user.role,
     jobTitle: user.jobTitle || "",
+    savedRefundMethod: user.savedRefundMethod || { type: "none" },
     createdAt: user.createdAt,
   });
 });
+
+// Helper for secure masking
+const maskAccountNum = (num) => {
+  const s = String(num || "").trim().replace(/[^0-9]/g, "");
+  if (s.length < 4) return s;
+  return `•••• •••• ${s.slice(-4)}`;
+};
+
+const maskUpi = (upi) => {
+  const s = String(upi || "").trim();
+  const parts = s.split("@");
+  if (parts.length !== 2) return s;
+  const username = parts[0];
+  const handle = parts[1];
+  if (username.length <= 3) {
+    return `${username.slice(0, 1)}***@${handle}`;
+  }
+  return `${username.slice(0, 3)}***@${handle}`;
+};
+
+// GET /api/users/refund-account
+exports.getRefundAccount = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user._id);
+  if (!user || user.isDeleted) {
+    res.status(404);
+    throw new Error("User not found");
+  }
+
+  const refundMethod = user.savedRefundMethod || { type: "none" };
+  res.json({
+    type: refundMethod.type || "none",
+    accountHolderName: refundMethod.accountHolderName || "",
+    bankName: refundMethod.bankName || "",
+    ifscCode: refundMethod.ifscCode || "",
+    maskedAccountNumber: refundMethod.maskedAccountNumber || maskAccountNum(refundMethod.accountNumber),
+    maskedUpiId: refundMethod.maskedUpiId || maskUpi(refundMethod.upiId),
+    upiId: refundMethod.upiId || "",
+    updatedAt: refundMethod.updatedAt,
+  });
+});
+
+// PUT /api/users/refund-account
+exports.updateRefundAccount = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user._id);
+  if (!user || user.isDeleted) {
+    res.status(404);
+    throw new Error("User not found");
+  }
+
+  const { type, accountHolderName, accountNumber, ifscCode, bankName, upiId } = req.body;
+
+  if (!type || !["bank", "upi", "none"].includes(type)) {
+    res.status(400);
+    throw new Error("Valid refund method type (bank, upi, none) is required");
+  }
+
+  if (type === "bank") {
+    const cleanAccount = String(accountNumber || "").replace(/[^0-9]/g, "");
+    const cleanIfsc = String(ifscCode || "").trim().toUpperCase();
+    const holder = String(accountHolderName || "").trim();
+    const bank = String(bankName || "").trim();
+
+    if (!holder) {
+      res.status(400);
+      throw new Error("Account holder name is required");
+    }
+    if (cleanAccount.length < 8 || cleanAccount.length > 20) {
+      res.status(400);
+      throw new Error("Bank account number must be between 8 and 20 digits");
+    }
+    if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(cleanIfsc)) {
+      res.status(400);
+      throw new Error("Invalid IFSC code format (e.g., HDFC0001234, SBIN0000456)");
+    }
+
+    user.savedRefundMethod = {
+      type: "bank",
+      accountHolderName: holder,
+      accountNumber: cleanAccount,
+      ifscCode: cleanIfsc,
+      bankName: bank || "Bank Transfer",
+      maskedAccountNumber: maskAccountNum(cleanAccount),
+      upiId: "",
+      maskedUpiId: "",
+      updatedAt: new Date(),
+    };
+  } else if (type === "upi") {
+    const cleanUpi = String(upiId || "").trim().toLowerCase();
+    if (!/^[a-zA-Z0-9.\-_]{2,49}@[a-zA-Z]{2,}$/.test(cleanUpi)) {
+      res.status(400);
+      throw new Error("Invalid UPI ID format (e.g., username@bank, mobile@upi)");
+    }
+
+    user.savedRefundMethod = {
+      type: "upi",
+      accountHolderName: "",
+      accountNumber: "",
+      ifscCode: "",
+      bankName: "",
+      maskedAccountNumber: "",
+      upiId: cleanUpi,
+      maskedUpiId: maskUpi(cleanUpi),
+      updatedAt: new Date(),
+    };
+  } else {
+    user.savedRefundMethod = {
+      type: "none",
+      accountHolderName: "",
+      accountNumber: "",
+      ifscCode: "",
+      bankName: "",
+      maskedAccountNumber: "",
+      upiId: "",
+      maskedUpiId: "",
+      updatedAt: new Date(),
+    };
+  }
+
+  await user.save();
+
+  res.json({
+    success: true,
+    message: "Refund payout details saved securely",
+    refundAccount: {
+      type: user.savedRefundMethod.type,
+      accountHolderName: user.savedRefundMethod.accountHolderName,
+      bankName: user.savedRefundMethod.bankName,
+      ifscCode: user.savedRefundMethod.ifscCode,
+      maskedAccountNumber: user.savedRefundMethod.maskedAccountNumber,
+      maskedUpiId: user.savedRefundMethod.maskedUpiId,
+      updatedAt: user.savedRefundMethod.updatedAt,
+    },
+  });
+});
+
 
 // PUT /api/users/profile
 exports.updateProfile = asyncHandler(async (req, res) => {

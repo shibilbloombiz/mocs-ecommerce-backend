@@ -33,7 +33,6 @@ const orderSchema = new mongoose.Schema(
     paymentMethod: { type: String, default: "COD" },
     paymentStatus: {
       type: String,
-      enum: ["Pending", "Paid", "Failed", "Refunded", "pending", "paid", "failed", "refunded"],
       default: "Pending",
       index: true,
     },
@@ -44,6 +43,33 @@ const orderSchema = new mongoose.Schema(
     paymentFailureReason: String,
     cancelReason: String,
     returnReason: String,
+    refundDetails: {
+      refundMethod: {
+        type: String,
+        default: "none",
+      },
+      refundStatus: {
+        type: String,
+        default: "None",
+      },
+      bankDetails: {
+        accountHolderName: String,
+        accountNumber: String,
+        ifscCode: String,
+        bankName: String,
+        maskedAccountNumber: String,
+      },
+      upiDetails: {
+        upiId: String,
+        maskedUpiId: String,
+      },
+      refundAmount: Number,
+      refundTransactionId: String,
+      refundInitiatedAt: Date,
+      refundEstimatedDate: Date,
+      refundCompletedAt: Date,
+      adminNotes: String,
+    },
     subtotal: Number,
     shipping: Number,
     shippingCharge: Number,
@@ -56,10 +82,10 @@ const orderSchema = new mongoose.Schema(
     },
     orderStatus: {
       type: String,
-      enum: ["Placed", "Confirmed", "Processing", "Shipped", "Out for Delivery", "Delivered", "Cancelled", "Return Requested", "Return Accepted", "Returned"],
       default: "Placed",
       index: true,
     },
+
     statusHistory: {
       type: [
         {

@@ -15,10 +15,12 @@ router.get("/:id", ctrl.getById);
 router.put("/:id/cancel", ctrl.cancelOrder);
 router.patch("/:id/cancel", ctrl.cancelOrder);
 router.put("/:id/return", ctrl.returnOrder);
+router.put("/:id/refund", requireAdmin, ctrl.processRefund);
 router.put("/:id", requireAdmin, ctrl.updateStatus);
 router.patch("/:id/status", requireAdmin, ctrl.updateStatus);
 router.patch("/:id/payment-status", requireAdmin, ctrl.updatePaymentStatus);
 router.delete("/:id", requireAdmin, ctrl.remove);
 router.post("/:id/restore", requireAdmin, ctrl.restore);
+
 
 module.exports = router;

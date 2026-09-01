@@ -80,8 +80,12 @@ exports.list = asyncHandler(async (req, res) => {
 });
 
 exports.create = asyncHandler(async (req, res) => {
-  const { product, productId, rating, text, comment, color, size, images } = req.body;
-  const rawId = product || productId;
+  const { product, productId, rating, text, comment, color, size, images } = req.body || {};
+  let rawId = product || productId;
+  if (rawId && typeof rawId === "object") {
+    rawId = rawId._id || rawId.id || rawId.productId;
+  }
+  rawId = String(rawId || "").trim();
 
   if (!rawId) {
     res.status(400);
@@ -102,12 +106,12 @@ exports.create = asyncHandler(async (req, res) => {
     });
   }
 
-  if (!targetProduct) {
-    res.status(404);
-    throw new Error("Product not found");
-  }
+  const targetProductId = targetProduct ? targetProduct._id : (mongoose.Types.ObjectId.isValid(rawId) ? rawId : null);
 
-  const targetProductId = targetProduct._id;
+  if (!targetProductId) {
+    res.status(404);
+    throw new Error("Product not found in catalog");
+  }
 
   const reviewRating = Number(rating);
   if (!reviewRating || reviewRating < 1 || reviewRating > 5) {

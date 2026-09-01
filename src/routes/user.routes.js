@@ -8,6 +8,9 @@ router.use(protect);
 router.get("/profile", ctrl.getProfile);
 router.put("/profile", ctrl.updateProfile);
 router.put("/change-password", ctrl.changePassword);
+router.get("/refund-account", ctrl.getRefundAccount);
+router.put("/refund-account", ctrl.updateRefundAccount);
+
 
 // Admin user management endpoints
 router.get("/", requireAdmin, ctrl.listUsers);
