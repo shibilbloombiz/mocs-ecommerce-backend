@@ -11,10 +11,12 @@ echo "🚀 Starting MOCS API VPS deployment..."
 # Navigate to project directory
 cd "$(dirname "$0")/src"
 
-# 1. Ensure uploads directory exists with correct permissions
-echo "📁 Setting up uploads directory..."
-mkdir -p uploads logs
+# 1. Ensure categorized uploads directory exists with correct permissions
+echo "📁 Setting up uploads directory structure..."
+mkdir -p uploads/products uploads/banners uploads/categories uploads/collections uploads/auth uploads/ads uploads/collage uploads/avatars uploads/reviews uploads/general logs
 chmod -R 755 uploads
+
+
 
 # 2. Install dependencies
 echo "📦 Installing production dependencies..."

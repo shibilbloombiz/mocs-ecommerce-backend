@@ -30,11 +30,23 @@ const deleteImageUrl = async (url) => {
   // Local disk cleanup
   if (url.includes("/uploads/")) {
     try {
-      const filename = path.basename(url.split("?")[0]);
-      const filePath = path.join(__dirname, "..", "uploads", filename);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-        console.log(`Successfully deleted local settings image: ${filename}`);
+      const match = url.match(/\/uploads\/(.+)$/);
+      if (match) {
+        const relPath = match[1].split("?")[0].replace(/^\/+/, "");
+        const safeRelPath = path.normalize(relPath).replace(/^(\.\.[\/\\])+/, "");
+        const filePath = path.join(__dirname, "..", "uploads", safeRelPath);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+          console.log(`Successfully deleted local settings image: ${safeRelPath}`);
+        } else {
+          // Backward-compatibility: Check in root uploads folder
+          const rootFilename = path.basename(safeRelPath);
+          const rootFilePath = path.join(__dirname, "..", "uploads", rootFilename);
+          if (fs.existsSync(rootFilePath)) {
+            fs.unlinkSync(rootFilePath);
+            console.log(`Successfully deleted local settings image from root: ${rootFilename}`);
+          }
+        }
       }
     } catch (err) {
       console.error("Failed to delete local settings image:", err);
@@ -42,6 +54,7 @@ const deleteImageUrl = async (url) => {
     return;
   }
 };
+
 
 // GET /api/settings/:key
 exports.getSettings = asyncHandler(async (req, res) => {

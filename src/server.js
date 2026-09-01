@@ -109,6 +109,7 @@ app.use("/api/categories", require("./routes/category.routes"));
 app.use("/api/collections", require("./routes/collection.routes"));
 
 app.use(notFound);
+
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;

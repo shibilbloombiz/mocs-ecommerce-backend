@@ -101,11 +101,23 @@ const deleteProductImage = async (url) => {
   // 2. Clean up from local disk if in /uploads/
   if (url.includes("/uploads/")) {
     try {
-      const filename = path.basename(url.split("?")[0]);
-      const filePath = path.join(__dirname, "..", "uploads", filename);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-        console.log(`Successfully deleted local image file: ${filename}`);
+      const match = url.match(/\/uploads\/(.+)$/);
+      if (match) {
+        const relPath = match[1].split("?")[0].replace(/^\/+/, "");
+        const safeRelPath = path.normalize(relPath).replace(/^(\.\.[\/\\])+/, "");
+        const filePath = path.join(__dirname, "..", "uploads", safeRelPath);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+          console.log(`Successfully deleted local image file: ${safeRelPath}`);
+        } else {
+          // Backward-compatibility: Check in root uploads folder
+          const rootFilename = path.basename(safeRelPath);
+          const rootFilePath = path.join(__dirname, "..", "uploads", rootFilename);
+          if (fs.existsSync(rootFilePath)) {
+            fs.unlinkSync(rootFilePath);
+            console.log(`Successfully deleted local image file from root: ${rootFilename}`);
+          }
+        }
       }
     } catch (err) {
       console.error("Failed to delete local image file:", err);
@@ -113,6 +125,7 @@ const deleteProductImage = async (url) => {
     return;
   }
 };
+
 
 
 exports.getProductImage = asyncHandler(async (req, res) => {
@@ -484,6 +497,22 @@ exports.restore = asyncHandler(async (req, res) => {
   res.json({ ok: true, message: "Product restored successfully", product });
 });
 
+const getUploadFileUrl = (file) => {
+  if (!file) return "";
+  if (file.location) return file.location;
+  if (file.path && (file.path.startsWith("http://") || file.path.startsWith("https://"))) {
+    return file.path;
+  }
+
+  const subfolder = file.subfolder || (file.destination ? path.basename(file.destination) : "");
+  const filename = file.filename || path.basename(file.path || "") || file.originalname;
+
+  if (subfolder && subfolder !== "uploads") {
+    return `/uploads/${subfolder}/${filename}`;
+  }
+  return `/uploads/${filename}`;
+};
+
 // POST /api/products/:id/images   (admin, multipart) — uploads to S3/Cloudinary/Local disk.
 exports.uploadImages = asyncHandler(async (req, res) => {
   const product = await Product.findById(req.params.id);
@@ -501,20 +530,7 @@ exports.uploadImages = asyncHandler(async (req, res) => {
   }
 
   for (const file of req.files || []) {
-    let url;
-    if (file.location) {
-      url = file.location;
-    } else if (file.path) {
-      if (file.path.startsWith("http")) {
-        url = file.path;
-      } else {
-        url = `/uploads/${path.basename(file.path)}`;
-      }
-    } else if (file.filename) {
-      url = `/uploads/${file.filename}`;
-    } else {
-      url = `/uploads/${file.originalname}`;
-    }
+    const url = getUploadFileUrl(file);
 
     variant.images.push({
       label: req.body.label || "Front",
@@ -535,20 +551,7 @@ exports.uploadSingleImage = asyncHandler(async (req, res) => {
     throw new Error("No file uploaded");
   }
 
-  let url;
-  if (req.file.location) {
-    url = req.file.location;
-  } else if (req.file.path) {
-    if (req.file.path.startsWith("http")) {
-      url = req.file.path;
-    } else {
-      url = `/uploads/${path.basename(req.file.path)}`;
-    }
-  } else if (req.file.filename) {
-    url = `/uploads/${req.file.filename}`;
-  } else {
-    url = `/uploads/${req.file.originalname}`;
-  }
+  const url = getUploadFileUrl(req.file);
 
   res.status(201).json({
     url,
@@ -556,3 +559,4 @@ exports.uploadSingleImage = asyncHandler(async (req, res) => {
     filename: req.file.originalname,
   });
 });
+
