@@ -12,9 +12,14 @@ const recalcRating = async (productId) => {
     }
     if (!targetProduct) {
       targetProduct = await Product.findOne({
-        $or: [{ slug: productId }, { name: new RegExp(`^${productId}$`, "i") }],
+        $or: [
+          { slug: productId },
+          { artNumber: productId },
+          { name: new RegExp(`^${productId}$`, "i") }
+        ],
       });
     }
+
 
     if (!targetProduct) return;
     const targetId = targetProduct._id;
@@ -89,7 +94,11 @@ exports.create = asyncHandler(async (req, res) => {
   }
   if (!targetProduct) {
     targetProduct = await Product.findOne({
-      $or: [{ slug: rawId }, { name: new RegExp(`^${rawId}$`, "i") }],
+      $or: [
+        { slug: rawId },
+        { artNumber: rawId },
+        { name: new RegExp(`^${rawId}$`, "i") }
+      ],
     });
   }
 
@@ -112,12 +121,10 @@ exports.create = asyncHandler(async (req, res) => {
     throw new Error("Please write a short review before submitting.");
   }
 
-  // Check if review already exists for this user and product
+  // Check if review already exists for this user and product using ObjectId
   let review = await Review.findOne({
-    $or: [
-      { product: targetProductId, user: req.user._id },
-      { product: targetProduct.slug, user: req.user._id },
-    ],
+    product: targetProductId,
+    user: req.user._id,
   });
 
   if (review) {
@@ -143,6 +150,7 @@ exports.create = asyncHandler(async (req, res) => {
   }
 
   await recalcRating(targetProductId);
+
 
   const populated = await Review.findById(review._id).populate("user", "name avatar");
   res.status(201).json(populated);
