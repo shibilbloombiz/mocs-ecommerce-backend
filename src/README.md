@@ -2,7 +2,7 @@
 
 > Future-migration reference. **Not wired into the Lovable preview** — these files
 > are standalone Node.js code for when you deploy a real Express + MongoDB
-> backend (Render/Railway + MongoDB Atlas + Cloudinary).
+> backend (Render/Railway + MongoDB Atlas + Local Disk/Multer).
 
 The live MOCS app in `src/` runs on TanStack Start (React + SSR on Cloudflare
 Workers) with browser-local state. When you're ready to move to a true MERN
@@ -13,7 +13,7 @@ architecture, this folder contains the matching backend.
 ```bash
 cd mern-reference
 npm install
-cp .env.example .env   # fill MONGO_URI / JWT_SECRET / CLOUDINARY_*
+cp .env.example .env   # fill MONGO_URI / JWT_SECRET
 npm run dev
 ```
 
@@ -47,7 +47,6 @@ routes additionally enforce `role === 'admin'` via `requireAdmin`.
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
-    "cloudinary": "^2.5.1",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
@@ -59,7 +58,6 @@ routes additionally enforce `role === 'admin'` via `requireAdmin`.
     "mongoose": "^8.8.1",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
-    "multer-storage-cloudinary": "^4.0.0",
     "nodemailer": "^6.9.16",
     "zod": "^3.23.8"
   },
@@ -73,9 +71,6 @@ MONGO_URI=mongodb+srv://USER:PASS@cluster0.mongodb.net/mocs
 JWT_SECRET=change-this-to-a-long-random-string
 JWT_EXPIRES_IN=7d
 CLIENT_URL=http://localhost:5173
-CLOUDINARY_CLOUD_NAME=
-CLOUDINARY_API_KEY=
-CLOUDINARY_API_SECRET=
 *** Add File: mern-reference/.gitignore
 node_modules
 .env
@@ -135,37 +130,40 @@ module.exports = async function connectDB() {
   await mongoose.connect(uri);
   console.log("MongoDB connected");
 };
-*** Add File: mern-reference/config/cloudinary.js
-// Cloudinary client + multer storage for product/review/category/user uploads.
-const cloudinary = require("cloudinary").v2;
-const { CloudinaryStorage } = require("multer-storage-cloudinary");
+*** Add File: mern-reference/config/multer.js
+// Multer disk storage for product/banner/category/avatar/review uploads.
 const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
 
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
+const uploadsDir = path.join(__dirname, "..", "uploads");
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
 
-const storage = new CloudinaryStorage({
-  cloudinary,
-  params: (req, file) => ({
-    folder: req.uploadFolder || "mocs/uploads",
-    public_id: `${Date.now()}-${file.originalname.replace(/\.[^.]+$/, "")}`,
-    resource_type: "image",
-  }),
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const subfolder = req.query?.type || "general";
+    const dir = path.join(uploadsDir, subfolder);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}${ext}`);
+  },
 });
 
 const upload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 25 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (!/^image\//.test(file.mimetype)) return cb(new Error("Only images allowed"));
     cb(null, true);
   },
 });
 
-module.exports = { cloudinary, upload };
+module.exports = { upload, uploadsDir };
 *** Add File: mern-reference/services/jwt.service.js
 const jwt = require("jsonwebtoken");
 
@@ -175,13 +173,6 @@ exports.signToken = (payload) =>
   });
 
 exports.verifyToken = (token) => jwt.verify(token, process.env.JWT_SECRET);
-*** Add File: mern-reference/services/cloudinary.service.js
-const { cloudinary } = require("../config/cloudinary");
-
-exports.uploadFromUrl = (url, folder = "mocs/uploads") =>
-  cloudinary.uploader.upload(url, { folder });
-
-exports.destroy = (publicId) => cloudinary.uploader.destroy(publicId);
 *** Add File: mern-reference/middleware/error.js
 exports.notFound = (req, _res, next) => {
   const err = new Error(`Not found - ${req.originalUrl}`);
