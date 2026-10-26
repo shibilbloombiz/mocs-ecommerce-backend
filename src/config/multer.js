@@ -57,50 +57,39 @@ const resolveUploadSubfolder = (req, file) => {
     ""
   ).toLowerCase().trim();
 
-  // 1. Products
+  // 1. Products & Hero Shoe Cutouts
   if (
+    rawType === "hero-product" ||
+    rawType === "hero-shoe" ||
+    rawType === "shoe" ||
     rawType === "product" ||
     rawType === "products" ||
     rawType === "item" ||
-    rawType === "shoe" ||
-    rawType === "variant" ||
-    req.baseUrl?.includes("/products") ||
-    req.path?.includes("/products")
+    rawType === "variant"
   ) {
-    // If specific sub-types like banner inside settings were passed, they have higher priority
-    if (
-      rawType.includes("banner") ||
-      rawType.includes("hero") ||
-      rawType.includes("auth") ||
-      rawType.includes("ad") ||
-      rawType.includes("category") ||
-      rawType.includes("collection") ||
-      rawType.includes("collage") ||
-      rawType.includes("promise") ||
-      rawType.includes("avatar")
-    ) {
-      // let sub-type matching handle below
-    } else {
-      return "products";
-    }
+    return "products";
   }
 
   // 2. Banners / Hero Slideshow
   if (
-    rawType.includes("hero") ||
-    rawType.includes("banner") ||
+    rawType.includes("hero-banner") ||
+    rawType.includes("hero-mobile-banner") ||
+    rawType.includes("hero-slide") ||
+    rawType === "hero" ||
+    rawType === "banner" ||
+    rawType === "banners" ||
     rawType === "slider" ||
-    rawType === "slideshow" ||
-    rawType === "hero-banner" ||
-    rawType === "hero-mobile-banner"
+    rawType === "slideshow"
   ) {
-    if (rawType.includes("category")) return "categories";
-    if (rawType.includes("collection")) return "collections";
     return "banners";
   }
 
-  // 3. Category Banners & Thumbnails
-  if (rawType.includes("category") || rawType === "cat") {
+  // 3. Category Banners & Lifestyle Gallery
+  if (
+    rawType.includes("category") ||
+    rawType.includes("gallery") ||
+    rawType === "cat"
+  ) {
     return "categories";
   }
 
@@ -110,12 +99,20 @@ const resolveUploadSubfolder = (req, file) => {
   }
 
   // 5. Auth / Login / Signup Slides
-  if (rawType.includes("auth") || rawType.includes("login") || rawType.includes("signup")) {
+  if (
+    rawType.includes("auth") ||
+    rawType.includes("login") ||
+    rawType.includes("signup")
+  ) {
     return "auth";
   }
 
   // 6. Advertisements & Promo Cards
-  if (rawType.includes("ad") || rawType.includes("promo") || rawType.includes("advertisement")) {
+  if (
+    rawType.includes("ad") ||
+    rawType.includes("promo") ||
+    rawType.includes("advertisement")
+  ) {
     return "ads";
   }
 
@@ -125,7 +122,11 @@ const resolveUploadSubfolder = (req, file) => {
   }
 
   // 8. User Avatars & Profiles
-  if (rawType.includes("avatar") || rawType.includes("user") || rawType.includes("profile")) {
+  if (
+    rawType.includes("avatar") ||
+    rawType.includes("user") ||
+    rawType.includes("profile")
+  ) {
     return "avatars";
   }
 
@@ -134,7 +135,12 @@ const resolveUploadSubfolder = (req, file) => {
     return "reviews";
   }
 
-  return "products"; // Standard default for ecommerce storefront
+  // Fallback for product routes
+  if (req.baseUrl?.includes("/products") || req.path?.includes("/products")) {
+    return "products";
+  }
+
+  return "general";
 };
 
 const storage = multer.diskStorage({

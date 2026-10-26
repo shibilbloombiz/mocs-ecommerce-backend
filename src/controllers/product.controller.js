@@ -513,7 +513,7 @@ const getUploadFileUrl = (file) => {
   return `/uploads/${filename}`;
 };
 
-// POST /api/products/:id/images   (admin, multipart) — uploads to S3/Cloudinary/Local disk.
+// POST /api/products/:id/images   (admin, multipart) — uploads to Multer local disk storage.
 exports.uploadImages = asyncHandler(async (req, res) => {
   const product = await Product.findById(req.params.id);
 
