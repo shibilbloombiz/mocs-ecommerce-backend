@@ -62,7 +62,7 @@ const productSchema = new mongoose.Schema(
     isDeleted: { type: Boolean, default: false, index: true },
     deletedAt: Date,
   },
-  { timestamps: true },
+  { timestamps: true, suppressReservedKeysWarning: true },
 );
 
 productSchema.index(
