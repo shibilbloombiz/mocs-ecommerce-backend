@@ -40,10 +40,12 @@ app.use(
         cleanOrigin === "http://localhost" ||
         cleanOrigin === "http://127.0.0.1";
       const isVercel = cleanOrigin.endsWith(".vercel.app");
+      const isMocsDomain = cleanOrigin.includes("mocs.in");
 
       if (
         isLocalhost ||
         isVercel ||
+        isMocsDomain ||
         allowedOrigins.includes(cleanOrigin) ||
         allowedOrigins.length === 0 ||
         allowedOrigins.includes("*")
