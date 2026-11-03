@@ -6,3 +6,7 @@ src/node_modules
 logs/
 src/uploads/*
 !src/uploads/.gitkeep
+!src/uploads/products
+!src/uploads/products/**
+!src/uploads/hero
+!src/uploads/hero/**
